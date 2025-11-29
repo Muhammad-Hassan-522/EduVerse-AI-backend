@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routers import students, assignments
+from app.routers import  students, assignments, assignment_submissions
 
 app = FastAPI(title="EduVerse AI Backend")
 
@@ -9,3 +9,4 @@ def root():
 
 app.include_router(students.router)
 app.include_router(assignments.router)
+app.include_router(assignment_submissions.router)

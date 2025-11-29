@@ -5,7 +5,6 @@ from datetime import datetime
 class AssignmentSubmissionCreate(BaseModel):
     studentId: str
     assignmentId: str
-    submittedAt: datetime
     fileUrl: str
     courseId: str
     tenantId: str
@@ -22,5 +21,6 @@ class AssignmentSubmissionResponse(BaseModel):
     tenantId: str
     gradedAt: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {
+        "from_attributes": True
+    }
