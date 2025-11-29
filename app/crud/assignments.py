@@ -31,16 +31,16 @@ def serialize_assignment(a):
 
 async def create_assignment(data):
     d = data.dict()
-    assignment_data = {
-        **d,
+    d.update({
+       
         "courseId": ObjectId(d["courseId"]),
         "teacherId": ObjectId(d["teacherId"]),
         "tenantId": ObjectId(d["tenantId"]),
         "uploadedAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow()
-    }
+    })
 
-    result = await db.assignments.insert_one(assignment_data)
+    result = await db.assignments.insert_one(d)
     new_assignment = await db.assignments.find_one({"_id": result.inserted_id})
     return serialize_assignment(new_assignment)
 
