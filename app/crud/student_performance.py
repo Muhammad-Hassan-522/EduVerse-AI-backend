@@ -1,242 +1,326 @@
-
-
 from bson import ObjectId
+from datetime import datetime
 from app.db.database import student_performance_collection
-
-
-# ----------------------- FIX OBJECT IDS (GLOBAL HELPER) ----------------------- #
-def fix_object_ids(data):
-    """Recursively convert ALL ObjectId inside any dict or list."""
-
-    if isinstance(data, ObjectId):
-        return str(data)
-
-    elif isinstance(data, list):
-        return [fix_object_ids(item) for item in data]
-
-    elif isinstance(data, dict):
-        new_dict = {}
-        for key, value in data.items():
-            new_dict[key] = fix_object_ids(value)
-        return new_dict
-
-    else:
-        return data
-
-
+from app.utils.mongo import fix_object_ids
 
 
 class StudentPerformanceCRUD:
 
-    # ---------------- XP + LEVEL SYSTEM ---------------- #
+    # -----------------------------------------------------------
+    # CREATE PERFORMANCE DOCUMENT WHEN STUDENT IS CREATED
+    # -----------------------------------------------------------
+    @staticmethod
+    async def create_performance_record(student_id: str, student_name: str, tenant_id: str):
+
+        doc = {
+            "studentId": ObjectId(student_id),
+            "studentName": student_name,
+            "tenantId": ObjectId(tenant_id),
+
+            # core points
+            "totalPoints": 0,
+            "pointsThisWeek": 0,
+
+            # XP system
+            "xp": 0,
+            "level": 1,
+            "xpToNextLevel": 300,
+
+            # breakdowns
+            "badges": [],
+            "certificates": [],
+            "weeklyStudyTime": [],
+            "courseStats": [],
+
+            "createdAt": datetime.utcnow()
+        }
+
+        await student_performance_collection.insert_one(doc)
+        return True
+
+    # -----------------------------------------------------------
+    # XP + LEVEL SYSTEM
+    # -----------------------------------------------------------
     @staticmethod
     def _update_level_system(data: dict):
+
         xp = data.get("xp", 0)
         level = data.get("level", 1)
 
-        xp_required = level * 500
+        def xp_needed_for(level):
+            raw = 300 * (1.5 ** (level - 1))
+            return int(round(raw / 50) * 50)
+
+        xp_required = xp_needed_for(level)
 
         while xp >= xp_required:
             xp -= xp_required
             level += 1
-            xp_required = level * 500
+            xp_required = xp_needed_for(level)
 
         data["xp"] = xp
         data["level"] = level
         data["xpToNextLevel"] = xp_required
         return data
 
-    # ---------------- GET BY TENANT ---------------- #
+    # -----------------------------------------------------------
+    # GET PERFORMANCE BY STUDENT + TENANT
+    # -----------------------------------------------------------
     @staticmethod
-    async def get_by_tenant(tenant_id: str):
-        doc = await student_performance_collection.find_one(
-            {"tenantId": ObjectId(tenant_id)}
-        )
-        if doc:
-            doc["id"] = str(doc["_id"])
-            doc["tenantId"] = str(doc["tenantId"])
-        return doc
+    async def get_student_performance(student_id: str, tenant_id: str):
 
-    # ---------------- ADD POINTS + UPDATE XP/LEVEL ---------------- #
-    @staticmethod
-    async def add_points(tenant_id: str, points: int):
+        doc = await student_performance_collection.find_one({
+            "studentId": ObjectId(student_id),
+            "tenantId": ObjectId(tenant_id)
+        })
 
-        await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"$inc": {"totalPoints": points, "pointsThisWeek": points, "xp": points}},
-        )
-
-        data = await StudentPerformanceCRUD.get_by_tenant(tenant_id)
-        if not data:
+        if not doc:
             return None
 
-        updated_data = StudentPerformanceCRUD._update_level_system(data)
+        doc = fix_object_ids(doc)
+        doc["id"] = doc.get("_id")
+        return doc
+
+    # -----------------------------------------------------------
+    # ADD POINTS
+    # -----------------------------------------------------------
+    @staticmethod
+    async def add_points(student_id: str, tenant_id: str, points: int):
 
         await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {
-                "$set": {
-                    "xp": updated_data["xp"],
-                    "level": updated_data["level"],
-                    "xpToNextLevel": updated_data["xpToNextLevel"]
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"$inc": {"totalPoints": points, "pointsThisWeek": points, "xp": points}}
+        )
+
+        updated = await StudentPerformanceCRUD.get_student_performance(student_id, tenant_id)
+        updated = StudentPerformanceCRUD._update_level_system(updated)
+
+        await student_performance_collection.update_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"$set": {
+                "xp": updated["xp"],
+                "level": updated["level"],
+                "xpToNextLevel": updated["xpToNextLevel"]
+            }}
+        )
+
+        return updated
+
+    # -----------------------------------------------------------
+    # BADGES
+    # -----------------------------------------------------------
+    @staticmethod
+    async def add_badge(student_id: str, tenant_id: str, badge: dict):
+
+        badge["date"] = datetime.utcnow()
+
+        await student_performance_collection.update_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"$push": {"badges": badge}}
+        )
+
+        return await StudentPerformanceCRUD.get_student_performance(student_id, tenant_id)
+
+    @staticmethod
+    async def view_badges(student_id: str, tenant_id: str):
+
+        doc = await student_performance_collection.find_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"badges": 1, "_id": 0}
+        )
+
+        return fix_object_ids(doc.get("badges", [])) if doc else []
+
+    # -----------------------------------------------------------
+    # CERTIFICATES
+    # -----------------------------------------------------------
+    @staticmethod
+    async def add_certificate(student_id: str, tenant_id: str, cert: dict):
+
+        cert["date"] = datetime.utcnow()
+
+        await student_performance_collection.update_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"$push": {"certificates": cert}}
+        )
+
+        return await StudentPerformanceCRUD.get_student_performance(student_id, tenant_id)
+
+    @staticmethod
+    async def view_certificates(student_id: str, tenant_id: str):
+
+        doc = await student_performance_collection.find_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"certificates": 1, "_id": 0}
+        )
+
+        return fix_object_ids(doc.get("certificates", [])) if doc else []
+
+    # -----------------------------------------------------------
+    # COURSE STATS
+    # -----------------------------------------------------------
+    @staticmethod
+    async def get_course_stats(student_id: str, tenant_id: str):
+
+        doc = await student_performance_collection.find_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"courseStats": 1, "_id": 0}
+        )
+
+        return fix_object_ids(doc.get("courseStats", [])) if doc else []
+
+    # -----------------------------------------------------------
+    # PROGRESS UPDATE + BADGE
+    # -----------------------------------------------------------
+    @staticmethod
+    async def update_course_progress(student_id: str, tenant_id: str, course_id: str, completion: int, last_active: str):
+
+        # update OR insert
+        update_result = await student_performance_collection.update_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id), "courseStats.courseId": course_id},
+            {"$set": {
+                "courseStats.$.completionPercentage": completion,
+                "courseStats.$.lastActive": last_active
+            }}
+        )
+
+        if update_result.modified_count == 0:
+            await student_performance_collection.update_one(
+                {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+                {"$push": {
+                    "courseStats": {
+                        "courseId": course_id,
+                        "completionPercentage": completion,
+                        "lastActive": last_active
+                    }
+                }}
+            )
+
+        # Award completion badge (only if 100%)
+        if completion == 100:
+            exists = await student_performance_collection.find_one({
+                "studentId": ObjectId(student_id),
+                "tenantId": ObjectId(tenant_id),
+                "badges.courseId": course_id
+            })
+
+            if not exists:
+                await StudentPerformanceCRUD.add_badge(student_id, tenant_id, {
+                    "courseId": course_id,
+                    "name": "Course Completer",
+                    "icon": "completion.png"
+                })
+
+        return await StudentPerformanceCRUD.get_student_performance(student_id, tenant_id)
+
+    # -----------------------------------------------------------
+    # WEEKLY TIME
+    # -----------------------------------------------------------
+    @staticmethod
+    async def add_weekly_time(student_id: str, tenant_id: str, week_start: str, minutes: int):
+
+        await student_performance_collection.update_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenant_id)},
+            {"$push": {
+                "weeklyStudyTime": {
+                    "weekStart": week_start,
+                    "minutes": minutes
                 }
-            }
+            }}
         )
 
-        return updated_data
+        return await StudentPerformanceCRUD.get_student_performance(student_id, tenant_id)
 
-    # ---------------- WEEKLY STUDY TIME ---------------- #
+    # -----------------------------------------------------------
+    # CLEAN TENANT TOP 5 (rank, name, points)
+    # -----------------------------------------------------------
     @staticmethod
-    async def add_weekly_time(tenant_id: str, week_start, minutes: int):
-        await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"$push": {"weeklyStudyTime": {"weekStart": week_start, "minutes": minutes}}},
-        )
-        return await StudentPerformanceCRUD.get_by_tenant(tenant_id)
+    async def tenant_top5(tenant_id: str):
 
-    # ---------------- BADGES ---------------- #
-    @staticmethod
-    async def add_badge(tenant_id: str, badge: dict):
-        await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"$push": {"badges": badge}},
-        )
-        return await StudentPerformanceCRUD.get_by_tenant(tenant_id)
+        cursor = student_performance_collection.find({
+            "tenantId": ObjectId(tenant_id)
+        })
 
-    @staticmethod
-    async def remove_badge(tenant_id: str, title: str):
-        await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"$pull": {"badges": {"title": title}}},
-        )
-        return await StudentPerformanceCRUD.get_by_tenant(tenant_id)
+        docs = await cursor.to_list(length=None)
 
-    # -------------------- TOP 5 LEADERBOARD -------------------- #
-    @staticmethod
-    async def get_top5_leaderboard():
-        cursor = student_performance_collection.find({})
-        all_students = await cursor.to_list(length=None)
+        leaderboard = [{
+            "studentName": d.get("studentName"),
+            "points": d.get("totalPoints", 0)
+        } for d in docs]
 
-        if not all_students:
-            return []
+        leaderboard.sort(key=lambda x: -x["points"])
 
-        leaderboard_entries = []
+        top5 = leaderboard[:5]
 
-        for s in all_students:
-
-            # Fix ObjectIds
-            s = fix_object_ids(s)
-
-            # Extract from LeaderBoard array (THIS IS WHERE YOUR DATA IS)
-            lb_items = s.get("LeaderBoard", [])
-
-            for item in lb_items:
-                name = item.get("studentName")
-                pts = item.get("points", 0)
-
-                if name:
-                    leaderboard_entries.append({
-                        "studentName": name,
-                        "points": pts
-                    })
-
-        # Sort by points descending
-        leaderboard_entries.sort(key=lambda x: -x["points"])
-
-        # Take top 5
-        top5 = leaderboard_entries[:5]
-
-        # Add ranks
-        for i, entry in enumerate(top5, start=1):
-            entry["rank"] = i
+        for idx, item in enumerate(top5, start=1):
+            item["rank"] = idx
 
         return top5
 
-
-    # ---------------- FULL LEADERBOARD (SORTED + RANKED) ---------------- #
+    # -----------------------------------------------------------
+    # CLEAN TENANT FULL LEADERBOARD
+    # -----------------------------------------------------------
     @staticmethod
-    async def get_full_leaderboard():
+    async def tenant_full(tenant_id: str):
+
+        cursor = student_performance_collection.find({
+            "tenantId": ObjectId(tenant_id)
+        })
+
+        docs = await cursor.to_list(length=None)
+
+        leaderboard = [{
+            "studentName": d.get("studentName"),
+            "points": d.get("totalPoints", 0)
+        } for d in docs]
+
+        leaderboard.sort(key=lambda x: -x["points"])
+
+        for idx, item in enumerate(leaderboard, start=1):
+            item["rank"] = idx
+
+        return leaderboard
+
+    # -----------------------------------------------------------
+    # CLEAN GLOBAL TOP 5
+    # -----------------------------------------------------------
+    @staticmethod
+    async def global_top5():
+
         cursor = student_performance_collection.find({})
-        all_students = await cursor.to_list(length=None)
+        docs = await cursor.to_list(length=None)
 
-        if not all_students:
-            return []
+        leaderboard = [{
+            "studentName": d.get("studentName"),
+            "points": d.get("totalPoints", 0)
+        } for d in docs]
 
-        cleaned = []
-        for s in all_students:
-            s = fix_object_ids(s)
-            s["id"] = str(s.get("_id"))
-            s["tenantId"] = str(s.get("tenantId"))
-            s["totalPoints"] = s.get("totalPoints", 0)
-            s["xp"] = s.get("xp", 0)
-            s["level"] = s.get("level", 1)
-            cleaned.append(s)
+        leaderboard.sort(key=lambda x: -x["points"])
 
-        cleaned.sort(
-            key=lambda x: (-x["totalPoints"], -x["xp"], -x["level"])
-        )
+        top5 = leaderboard[:5]
 
-        for i, s in enumerate(cleaned, start=1):
-            s["rank"] = i
+        for idx, item in enumerate(top5, start=1):
+            item["rank"] = idx
 
-        return cleaned
+        return top5
 
-    # ---------------- CERTIFICATES ---------------- #
+    # -----------------------------------------------------------
+    # CLEAN GLOBAL FULL LEADERBOARD
+    # -----------------------------------------------------------
     @staticmethod
-    async def add_certificate(tenant_id: str, cert: dict):
-        await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"$push": {"certificates": cert}},
-        )
-        return await StudentPerformanceCRUD.get_by_tenant(tenant_id)
+    async def global_full():
 
-    @staticmethod
-    async def remove_certificate(tenant_id: str, title: str):
-        await student_performance_collection.update_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"$pull": {"certificates": {"title": title}}},
-        )
-        return await StudentPerformanceCRUD.get_by_tenant(tenant_id)
-# ---------------- COURSE PROGRESS (SAFE) ---------------- #
-    @staticmethod
-    async def update_course_progress(tenant_id: str, course_id: str, completion: int, last_active):
+        cursor = student_performance_collection.find({})
+        docs = await cursor.to_list(length=None)
 
-        # Try to update existing course progress entry
-        update_result = await student_performance_collection.update_one(
-            {
-                "tenantId": ObjectId(tenant_id),
-                "courseStats.courseId": course_id
-            },
-            {
-                "$set": {
-                    "courseStats.$.completionPercentage": completion,
-                    "courseStats.$.lastActive": last_active
-                }
-            }
-        )
+        leaderboard = [{
+            "studentName": d.get("studentName"),
+            "points": d.get("totalPoints", 0)
+        } for d in docs]
 
-        # If no existing entry was updated → add new course progress
-        if update_result.modified_count == 0:
-            await student_performance_collection.update_one(
-                {"tenantId": ObjectId(tenant_id)},
-                {
-                    "$push": {
-                        "courseStats": {
-                            "courseId": course_id,
-                            "completionPercentage": completion,
-                            "lastActive": last_active
-                        }
-                    }
-                }
-            )
+        leaderboard.sort(key=lambda x: -x["points"])
 
-        return await StudentPerformanceCRUD.get_by_tenant(tenant_id)
+        for idx, item in enumerate(leaderboard, start=1):
+            item["rank"] = idx
 
-    # -------------- GET COURSE STATS -------------- #
-    @staticmethod
-    async def get_course_stats(tenant_id: str):
-        doc = await student_performance_collection.find_one(
-            {"tenantId": ObjectId(tenant_id)},
-            {"courseStats": 1, "_id": 0}
-        )
-        return doc or {"courseStats": []}
+        return leaderboard

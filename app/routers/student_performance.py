@@ -1,85 +1,77 @@
-# app/routers/student_performance.py
-from fastapi import APIRouter, HTTPException
-
-from app.schemas.student_performance import (
-    StudentPerformanceResponse,
-    AddPointsRequest,
-    WeeklyTimeRequest,
-    BadgeRequest,
-    CertificateRequest,
-    CourseProgressRequest
-)
+from fastapi import APIRouter
 from app.crud.student_performance import StudentPerformanceCRUD
 
-router = APIRouter(
-    prefix="/studentPerformance",
-    tags=["Student Performance / Leaderboard"],
-)
+router = APIRouter(prefix="/studentPerformance", tags=["Student Performance"])
 
 
-@router.get("/leaderboard/{tenantId}", response_model=StudentPerformanceResponse)
-async def get_leaderboard(tenantId: str):
-    doc = await StudentPerformanceCRUD.get_by_tenant(tenantId)
-    if not doc:
-        raise HTTPException(status_code=404, detail="Student performance not found")
-    return doc
+# -------------------- GLOBAL LEADERBOARDS --------------------
+@router.get("/leaderboard/global-full")
+async def global_full():
+    return await StudentPerformanceCRUD.global_full()
 
 
-@router.patch("/leaderboard/{tenantId}/add-points", response_model=StudentPerformanceResponse)
-async def add_points(tenantId: str, body: AddPointsRequest):
-    return await StudentPerformanceCRUD.add_points(tenantId, body.points)
+@router.get("/leaderboard/global-top5")
+async def global_top5():
+    return await StudentPerformanceCRUD.global_top5()
 
 
-@router.patch("/leaderboard/{tenantId}/weekly-time", response_model=StudentPerformanceResponse)
-async def weekly_time(tenantId: str, body: WeeklyTimeRequest):
-    return await StudentPerformanceCRUD.add_weekly_time(tenantId, body.weekStart, body.minutes)
+# -------------------- TENANT LEADERBOARDS --------------------
+@router.get("/{tenantId}/leaderboard")
+async def tenant_full(tenantId: str):
+    return await StudentPerformanceCRUD.tenant_full(tenantId)
 
 
-@router.patch("/leaderboard/{tenantId}/add-badge", response_model=StudentPerformanceResponse)
-async def add_badge(tenantId: str, body: BadgeRequest):
-    return await StudentPerformanceCRUD.add_badge(tenantId, body.dict())
+@router.get("/{tenantId}/leaderboard-top5")
+async def tenant_top5(tenantId: str):
+    return await StudentPerformanceCRUD.tenant_top5(tenantId)
 
 
-@router.delete("/leaderboard/{tenantId}/remove-badge/{title}", response_model=StudentPerformanceResponse)
-async def remove_badge(tenantId: str, title: str):
-    return await StudentPerformanceCRUD.remove_badge(tenantId, title)
+# -------------------- STUDENT PERFORMANCE --------------------
+@router.get("/{tenantId}/{studentId}")
+async def get_student_performance(tenantId: str, studentId: str):
+    return await StudentPerformanceCRUD.get_student_performance(studentId, tenantId)
 
 
-@router.patch("/leaderboard/{tenantId}/add-certificate", response_model=StudentPerformanceResponse)
-async def add_certificate(tenantId: str, body: CertificateRequest):
-    return await StudentPerformanceCRUD.add_certificate(tenantId, body.dict())
+# -------------------- BADGES --------------------
+@router.get("/{tenantId}/{studentId}/badges")
+async def get_badges(tenantId: str, studentId: str):
+    return await StudentPerformanceCRUD.view_badges(studentId, tenantId)
 
 
-@router.delete("/leaderboard/{tenantId}/remove-certificate/{title}", response_model=StudentPerformanceResponse)
-async def remove_certificate(tenantId: str, title: str):
-    return await StudentPerformanceCRUD.remove_certificate(tenantId, title)
+@router.post("/{tenantId}/{studentId}/badges")
+async def add_badge(tenantId: str, studentId: str, badge: dict):
+    return await StudentPerformanceCRUD.add_badge(studentId, tenantId, badge)
 
-@router.get(
-    "/studentPerformance/leaderboard-full",
-    summary="Get Full Leaderboard (sorted + ranked)",
-    tags=["Student Performance / Leaderboard"],
-)
-async def get_full_leaderboard():
-    """
-    Returns **all** studentPerformance documents,
-    sorted by totalPoints, xp, level and with a `rank` field added.
-    """
-    data = await StudentPerformanceCRUD.get_full_leaderboard()   # <-- IMPORTANT: await
-    return data     
 
-@router.get("/studentPerformance/leaderboard/top5")
-async def get_top5_leaderboard():
-    return await StudentPerformanceCRUD.get_top5_leaderboard()
+# -------------------- CERTIFICATES --------------------
+@router.get("/{tenantId}/{studentId}/certificates")
+async def get_certificates(tenantId: str, studentId: str):
+    return await StudentPerformanceCRUD.view_certificates(studentId, tenantId)
 
-@router.patch("/leaderboard/{tenantId}/course-progress")
-async def update_course_progress(tenantId: str, body: CourseProgressRequest):
-    return await StudentPerformanceCRUD.update_course_progress(
-        tenantId, 
-        body.courseId, 
-        body.completionPercentage, 
-        body.lastActive
-    )
 
-@router.get("/leaderboard/{tenantId}/course-stats")
-async def get_course_stats(tenantId: str):
-    return await StudentPerformanceCRUD.get_course_stats(tenantId)
+@router.post("/{tenantId}/{studentId}/certificates")
+async def add_certificate(tenantId: str, studentId: str, cert: dict):
+    return await StudentPerformanceCRUD.add_certificate(studentId, tenantId, cert)
+
+
+# -------------------- COURSE STATS --------------------
+@router.get("/{tenantId}/{studentId}/course-stats")
+async def course_stats(tenantId: str, studentId: str):
+    return await StudentPerformanceCRUD.get_course_stats(studentId, tenantId)
+
+
+@router.post("/{tenantId}/{studentId}/course-progress/{courseId}")
+async def update_course_progress(tenantId: str, studentId: str, courseId: str, completion: int, lastActive: str):
+    return await StudentPerformanceCRUD.update_course_progress(studentId, tenantId, courseId, completion, lastActive)
+
+
+# -------------------- WEEKLY TIME --------------------
+@router.post("/{tenantId}/{studentId}/weekly-time")
+async def weekly_time(tenantId: str, studentId: str, weekStart: str, minutes: int):
+    return await StudentPerformanceCRUD.add_weekly_time(studentId, tenantId, weekStart, minutes)
+
+
+# -------------------- POINTS --------------------
+@router.post("/{tenantId}/{studentId}/add-points")
+async def add_points(tenantId: str, studentId: str, points: int):
+    return await StudentPerformanceCRUD.add_points(studentId, tenantId, points)
