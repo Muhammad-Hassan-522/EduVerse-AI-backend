@@ -18,5 +18,5 @@ async def signup_teacher(payload: UserCreate):
     if payload.role == "teacher":
         await teachers.create_teacher(user["id"])
 
-    return {"message": "Teacher craeted successfully", "user": user}
+    return {"message": "Teacher created successfully", "user": user}
 

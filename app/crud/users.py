@@ -44,6 +44,28 @@ async def verify_user(email: str, password: str):
     u = await get_user_by_email(email)
     if not u or not verify_password(password, u["password"]):
         return None
+
+    # After verifying, fetch the role-specific doc to get the tenantId
+    user_id = u["_id"]
+    role = u["role"]
+    tenant_id = None
+
+    if role == "teacher":
+        role_doc = await db.teachers.find_one({"userId": user_id})
+        if role_doc:
+            tenant_id = role_doc.get("tenantId")
+    elif role == "student":
+        role_doc = await db.students.find_one({"userId": user_id})
+        if role_doc:
+            tenant_id = role_doc.get("tenantId")
+    elif role == "admin":
+        role_doc = await db.admins.find_one({"userId": user_id})
+        if role_doc:
+            tenant_id = role_doc.get("tenantId")
+            
+    # Add tenantId to the user object before serializing
+    u["tenantId"] = tenant_id
+    
     return serialize_user(u)
 
 

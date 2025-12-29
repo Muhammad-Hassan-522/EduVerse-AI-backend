@@ -34,6 +34,7 @@ class TeacherUpdate(BaseModel):
 class TeacherResponse(BaseModel):
     id: str
     userId: str
+    tenantId: Optional[str] = None  # include in response
     user: UserResponse  # NESTED USER
     assignedCourses: List[str] = []
     qualifications: List[str] = []

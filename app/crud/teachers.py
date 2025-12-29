@@ -5,11 +5,15 @@ from app.crud.users import serialize_user
 
 
 def serialize_teacher(t, user):
+    tenant_id = t.get("tenantId")
+    # Convert ObjectIds in assignedCourses to strings
+    assigned_courses = [str(c) if isinstance(c, ObjectId) else c for c in t.get("assignedCourses", [])]
     return {
         "id": str(t["_id"]),
         "userId": str(t["userId"]),
+        "tenantId": str(tenant_id) if tenant_id else None,
         "user": serialize_user(user),  # attach user
-        "assignedCourses": t.get("assignedCourses", []),
+        "assignedCourses": assigned_courses,
         "qualifications": t.get("qualifications", []),
         "subjects": t.get("subjects", []),
         "status": t.get("status"),

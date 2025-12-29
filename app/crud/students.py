@@ -7,12 +7,17 @@ from app.crud.users import serialize_user
 
 
 def serialize_student(s, user):
+    tenant_id = s.get("tenantId")
+    # Convert ObjectIds in course arrays to strings
+    enrolled_courses = [str(c) if isinstance(c, ObjectId) else c for c in s.get("enrolledCourses", [])]
+    completed_courses = [str(c) if isinstance(c, ObjectId) else c for c in s.get("completedCourses", [])]
     return {
         "id": str(s["_id"]),
         "userId": str(s["userId"]),
+        "tenantId": str(tenant_id) if tenant_id else None,
         "user": serialize_user(user),  #  attach user
-        "enrolledCourses": s.get("enrolledCourses", []),
-        "completedCourses": s.get("completedCourses", []),
+        "enrolledCourses": enrolled_courses,
+        "completedCourses": completed_courses,
         "status": s.get("status"),
         "createdAt": s.get("createdAt"),
         "updatedAt": s.get("updatedAt"),

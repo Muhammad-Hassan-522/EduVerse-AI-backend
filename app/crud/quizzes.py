@@ -23,6 +23,7 @@ def serialize_quiz(quiz: dict) -> dict:
     return {
         "id": str(quiz["_id"]),
         "courseId": str(quiz["courseId"]),
+        "courseName": str(quiz["courseName"]),
         "teacherId": str(quiz["teacherId"]),
         "tenantId": str(quiz["tenantId"]),
         "quizNumber": quiz["quizNumber"],
