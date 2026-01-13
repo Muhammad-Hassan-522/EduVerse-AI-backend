@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status, Depends
 from bson import ObjectId
 from typing import Optional
 
@@ -8,13 +8,30 @@ from app.crud.quizzes import (
     get_quiz,
     get_quizzes_filtered,
     update_quiz,
-    delete_quiz
+    delete_quiz,
+    get_student_quizzes
 )
+from app.auth.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/quizzes",
     tags=["Quizzes"]
 )
+
+# ------------------ STUDENT SPECIFIC ------------------
+@router.get("/student/me", response_model=list[QuizResponse])
+async def get_my_quizzes(current_user=Depends(get_current_user)):
+    """
+    Fetch quizzes ONLY for courses the student is enrolled in.
+    """
+    if current_user["role"] != "student":
+        raise HTTPException(status_code=403, detail="Only students can access this endpoint")
+        
+    return await get_student_quizzes(
+        user_id=current_user["user_id"],
+        tenant_id=current_user["tenant_id"]
+    )
+
 
 # ------------------ VALIDATION ------------------
 def _validate_objectid(_id: str):
@@ -71,7 +88,11 @@ async def list_quizzes(
 
 # ------------------ UPDATE QUIZ ------------------
 @router.patch("/{quiz_id}", response_model=QuizResponse, summary="Update/Patch quiz by ID")
-async def update_quiz_route(quiz_id: str, teacher_id: str, updates: QuizUpdate):
+async def update_quiz_route(
+    quiz_id: str,
+    updates: QuizUpdate,
+    teacher_id: str = Query(..., description="Teacher ID for authorization")
+):
     _validate_objectid(quiz_id)
     _validate_objectid(teacher_id)
 
@@ -88,7 +109,10 @@ async def update_quiz_route(quiz_id: str, teacher_id: str, updates: QuizUpdate):
 
 # ------------------ DELETE QUIZ ------------------
 @router.delete("/{quiz_id}", summary="Delete quiz by ID")
-async def delete_quiz_route(quiz_id: str, teacher_id: str):
+async def delete_quiz_route(
+    quiz_id: str,
+    teacher_id: str = Query(..., description="Teacher ID for authorization")
+):
     _validate_objectid(quiz_id)
     _validate_objectid(teacher_id)
 

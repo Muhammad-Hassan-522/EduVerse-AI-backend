@@ -1,45 +1,51 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 from datetime import datetime
-from app.schemas.users import UserResponse
-
-# ---------- Requests ----------
-
 
 class TeacherCreate(BaseModel):
-    userId: str
+    fullName: str
+    email: EmailStr
+    password: str
+    profileImageURL: Optional[str] = ""
+    assignedCourses: List[str] = []
+    contactNo: Optional[str]
+    country: Optional[str]
+    status: str = "active"
+    role: str = "teacher"
     qualifications: List[str] = []
     subjects: List[str] = []
-
+    tenantId: str
 
 class TeacherUpdate(BaseModel):
-    # ---- user fields ----
     fullName: Optional[str] = None
+    email: Optional[EmailStr] = None
     profileImageURL: Optional[str] = None
+    assignedCourses: Optional[List[str]] = None
     contactNo: Optional[str] = None
     country: Optional[str] = None
-
-    # ---- teacher fields ----
+    status: Optional[str] = None
     qualifications: Optional[List[str]] = None
     subjects: Optional[List[str]] = None
-    assignedCourses: Optional[List[str]] = None
-    status: Optional[str] = None
-
-    model_config = {"from_attributes": True}
-
-
-# ---------- Response ----------
-
 
 class TeacherResponse(BaseModel):
     id: str
-    userId: str
-    user: UserResponse  # NESTED USER
-    assignedCourses: List[str] = []
-    qualifications: List[str] = []
-    subjects: List[str] = []
+    fullName: str
+    email: str
+    profileImageURL: str
+    assignedCourses: List[str]
+    contactNo: Optional[str]
+    country: Optional[str]
     status: str
+    role: str
     createdAt: datetime
     updatedAt: datetime
+    lastLogin: Optional[datetime]
+    qualifications: List[str]
+    subjects: List[str]
+    tenantId: str
 
     model_config = {"from_attributes": True}
+
+class ChangePassword(BaseModel):
+    oldPassword: str
+    newPassword: str

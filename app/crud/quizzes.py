@@ -23,6 +23,7 @@ def serialize_quiz(quiz: dict) -> dict:
     return {
         "id": str(quiz["_id"]),
         "courseId": str(quiz["courseId"]),
+        "courseName": str(quiz["courseName"]),
         "teacherId": str(quiz["teacherId"]),
         "tenantId": str(quiz["tenantId"]),
         "quizNumber": quiz["quizNumber"],
@@ -186,4 +187,36 @@ async def delete_quiz(_id, teacherId):
         }
     )
 
+
     return True
+
+async def get_student_quizzes(user_id: str, tenant_id: str):
+    """
+    Fetch quizzes for courses the student is enrolled in.
+    """
+    # 1. Find Student Profile by User ID
+    # We need to access the students collection directly or import logic
+    # To avoid circular imports, simpler to just access db.students
+    user_oid = _ensure_objectid(user_id, "userId")
+    tenant_oid = _ensure_objectid(tenant_id, "tenantId")
+
+    student = await db.students.find_one({"userId": user_oid, "tenantId": tenant_oid})
+    if not student:
+        return [] # Or raise error
+
+    enrolled_courses = student.get("enrolledCourses", [])
+    # Ensure they are ObjectIds
+    course_ids = [ObjectId(c) for c in enrolled_courses if ObjectId.is_valid(c)]
+
+    if not course_ids:
+        return []
+
+    # 2. Query Quizzes in those courses
+    cursor = db.quizzes.find({
+        "courseId": {"$in": course_ids},
+        "tenantId": tenant_oid,
+        "isDeleted": False,
+        "status": "active" # Students should only see active quizzes? Usually yes.
+    }).sort("createdAt", -1)
+
+    return [serialize_quiz(q) async for q in cursor]

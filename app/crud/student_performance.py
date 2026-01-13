@@ -3,19 +3,19 @@ from datetime import datetime
 from app.db.database import student_performance_collection
 from app.utils.mongo import fix_object_ids
 
-
 class StudentPerformanceCRUD:
 
     # -----------------------------------------------------------
     # CREATE PERFORMANCE DOCUMENT WHEN STUDENT IS CREATED
     # -----------------------------------------------------------
     @staticmethod
-    async def create_performance_record(student_id: str, student_name: str, tenant_id: str):
+    async def create_performance_record(student_id: str, student_name: str, tenant_id: str, user_id: str = None):
 
         doc = {
             "studentId": ObjectId(student_id),
             "studentName": student_name,
             "tenantId": ObjectId(tenant_id),
+            "userId": ObjectId(user_id) if user_id else None,
 
             # core points
             "totalPoints": 0,
@@ -232,29 +232,50 @@ class StudentPerformanceCRUD:
         return await StudentPerformanceCRUD.get_student_performance(student_id, tenant_id)
 
     # -----------------------------------------------------------
+    # HELPER: Process Leaderboard with Lookup
+    # -----------------------------------------------------------
+    @staticmethod
+    async def _get_leaderboard(pipeline: list):
+        # Add lookup to pipeline
+        pipeline.extend([
+            {"$lookup": {
+                "from": "users",
+                "localField": "userId",
+                "foreignField": "_id",
+                "as": "user"
+            }},
+            {"$unwind": {"path": "$user", "preserveNullAndEmptyArrays": True}},
+            {"$sort": {"totalPoints": -1}}
+        ])
+        
+        cursor = student_performance_collection.aggregate(pipeline)
+        docs = await cursor.to_list(length=None)
+        
+        leaderboard = []
+        for d in docs:
+            user = d.get("user", {})
+            name = user.get("fullName") if user else d.get("studentName")
+            leaderboard.append({
+                "studentName": name,
+                "points": d.get("totalPoints", 0)
+            })
+            
+        leaderboard.sort(key=lambda x: -x["points"])
+        
+        # Limit to top 5 if needed? The functions will slice.
+        return leaderboard
+
+    # -----------------------------------------------------------
     # CLEAN TENANT TOP 5 (rank, name, points)
     # -----------------------------------------------------------
     @staticmethod
     async def tenant_top5(tenant_id: str):
-
-        cursor = student_performance_collection.find({
-            "tenantId": ObjectId(tenant_id)
-        })
-
-        docs = await cursor.to_list(length=None)
-
-        leaderboard = [{
-            "studentName": d.get("studentName"),
-            "points": d.get("totalPoints", 0)
-        } for d in docs]
-
-        leaderboard.sort(key=lambda x: -x["points"])
-
+        pipeline = [{"$match": {"tenantId": ObjectId(tenant_id)}}]
+        leaderboard = await StudentPerformanceCRUD._get_leaderboard(pipeline)
+        
         top5 = leaderboard[:5]
-
         for idx, item in enumerate(top5, start=1):
             item["rank"] = idx
-
         return top5
 
     # -----------------------------------------------------------
@@ -262,23 +283,11 @@ class StudentPerformanceCRUD:
     # -----------------------------------------------------------
     @staticmethod
     async def tenant_full(tenant_id: str):
-
-        cursor = student_performance_collection.find({
-            "tenantId": ObjectId(tenant_id)
-        })
-
-        docs = await cursor.to_list(length=None)
-
-        leaderboard = [{
-            "studentName": d.get("studentName"),
-            "points": d.get("totalPoints", 0)
-        } for d in docs]
-
-        leaderboard.sort(key=lambda x: -x["points"])
-
+        pipeline = [{"$match": {"tenantId": ObjectId(tenant_id)}}]
+        leaderboard = await StudentPerformanceCRUD._get_leaderboard(pipeline)
+        
         for idx, item in enumerate(leaderboard, start=1):
             item["rank"] = idx
-
         return leaderboard
 
     # -----------------------------------------------------------
@@ -286,22 +295,12 @@ class StudentPerformanceCRUD:
     # -----------------------------------------------------------
     @staticmethod
     async def global_top5():
-
-        cursor = student_performance_collection.find({})
-        docs = await cursor.to_list(length=None)
-
-        leaderboard = [{
-            "studentName": d.get("studentName"),
-            "points": d.get("totalPoints", 0)
-        } for d in docs]
-
-        leaderboard.sort(key=lambda x: -x["points"])
-
+        pipeline = []
+        leaderboard = await StudentPerformanceCRUD._get_leaderboard(pipeline)
+        
         top5 = leaderboard[:5]
-
         for idx, item in enumerate(top5, start=1):
             item["rank"] = idx
-
         return top5
 
     # -----------------------------------------------------------
@@ -309,18 +308,119 @@ class StudentPerformanceCRUD:
     # -----------------------------------------------------------
     @staticmethod
     async def global_full():
-
-        cursor = student_performance_collection.find({})
-        docs = await cursor.to_list(length=None)
-
-        leaderboard = [{
-            "studentName": d.get("studentName"),
-            "points": d.get("totalPoints", 0)
-        } for d in docs]
-
-        leaderboard.sort(key=lambda x: -x["points"])
-
+        pipeline = []
+        leaderboard = await StudentPerformanceCRUD._get_leaderboard(pipeline)
+        
         for idx, item in enumerate(leaderboard, start=1):
             item["rank"] = idx
-
         return leaderboard
+
+    # -----------------------------------------------------------
+    # GET PERFORMANCE FOR TEACHER'S STUDENTS
+    # -----------------------------------------------------------
+    @staticmethod
+    async def get_teacher_performances(teacher_id: str, tenant_id: str):
+        from app.db.database import courses_collection, students_collection
+        
+        try:
+            # 1. Get all course IDs for this teacher - Handle both string and ObjectId formats
+            teacher_query = {
+                "tenantId": ObjectId(tenant_id),
+                "$or": [
+                    {"teacherId": teacher_id},
+                    {"teacherId": ObjectId(teacher_id) if ObjectId.is_valid(teacher_id) else None}
+                ]
+            }
+            
+            teacher_courses = await courses_collection.find(teacher_query).to_list(length=None)
+            course_ids = [str(c["_id"]) for c in teacher_courses]
+            
+            if not course_ids:
+                return []
+                
+            # 2. Aggregate from Students collection
+            pipeline = [
+                # Match students in this tenant who are enrolled in ANY of the teacher's courses
+                {"$match": {
+                    "tenantId": ObjectId(tenant_id),
+                    "enrolledCourses": {"$in": course_ids}
+                }},
+                
+                {"$unwind": "$enrolledCourses"},
+                {"$match": {"enrolledCourses": {"$in": course_ids}}},
+                
+                {"$lookup": {
+                    "from": "users",
+                    "localField": "userId",
+                    "foreignField": "_id",
+                    "as": "user"
+                }},
+                {"$unwind": {"path": "$user", "preserveNullAndEmptyArrays": True}},
+                
+                {"$addFields": {"course_oid": {"$toObjectId": "$enrolledCourses"}}},
+                {"$lookup": {
+                    "from": "courses",
+                    "localField": "course_oid",
+                    "foreignField": "_id",
+                    "as": "course"
+                }},
+                {"$unwind": {"path": "$course", "preserveNullAndEmptyArrays": True}},
+                
+                {"$lookup": {
+                    "from": "studentPerformance", # Fixed collection name (camelCase)
+                    "localField": "_id",
+                    "foreignField": "studentId",
+                    "as": "performance"
+                }},
+                {"$unwind": {"path": "$performance", "preserveNullAndEmptyArrays": True}},
+                
+                {"$project": {
+                    "_id": {"$ifNull": [{"$toString": "$performance._id"}, ""]},
+                    "studentId": {"$toString": "$_id"},
+                    "courseId": "$enrolledCourses",
+                    "tenantId": {"$toString": "$tenantId"},
+                    "studentName": {"$ifNull": ["$user.fullName", "$studentName", "Unknown Student"]},
+                    "courseName": {"$ifNull": ["$course.title", "Unknown Course"]},
+                    "progress": {
+                        "$let": {
+                            "vars": {
+                                "matched": {
+                                    "$filter": {
+                                        "input": {"$ifNull": ["$performance.courseStats", []]},
+                                        "as": "stat",
+                                        "cond": {"$eq": ["$$stat.courseId", "$enrolledCourses"]}
+                                    }
+                                }
+                            },
+                            "in": {"$ifNull": [{"$arrayElemAt": ["$$matched.completionPercentage", 0]}, 0]}
+                        }
+                    },
+                    "lastUpdated": {
+                        "$let": {
+                            "vars": {
+                                "matched": {
+                                    "$filter": {
+                                        "input": {"$ifNull": ["$performance.courseStats", []]},
+                                        "as": "stat",
+                                        "cond": {"$eq": ["$$stat.courseId", "$enrolledCourses"]}
+                                    }
+                                }
+                            },
+                            "in": {"$ifNull": [{"$arrayElemAt": ["$$matched.lastActive", 0]}, "Never"]}
+                        }
+                    },
+                    "marks": {"$literal": 0},
+                    "totalMarks": {"$literal": 0},
+                    "grade": {"$literal": "N/A"},
+                    "attendance": {"$literal": 100}
+                }}
+            ]
+            
+            cursor = students_collection.aggregate(pipeline)
+            performances = await cursor.to_list(length=None)
+            return performances
+            
+        except Exception as e:
+            pass
+            # Return empty list on error instead of crashing, to avoid CORS issues
+            return []

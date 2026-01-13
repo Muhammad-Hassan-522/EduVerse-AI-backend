@@ -44,7 +44,20 @@ async def verify_user(email: str, password: str):
     u = await get_user_by_email(email)
     if not u or not verify_password(password, u["password"]):
         return None
-    return serialize_user(u)
+    
+    user_data = serialize_user(u)
+    
+    # Add role-specific profile ID
+    if u["role"] == "student":
+        student = await db.students.find_one({"userId": u["_id"]})
+        if student:
+            user_data["studentId"] = str(student["_id"])
+    elif u["role"] == "teacher":
+        teacher = await db.teachers.find_one({"userId": u["_id"]})
+        if teacher:
+            user_data["teacherId"] = str(teacher["_id"])
+            
+    return user_data
 
 
 async def update_last_login(user_id: str):

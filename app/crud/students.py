@@ -1,154 +1,336 @@
-from bson import ObjectId
 from datetime import datetime
-
+from bson import ObjectId
 from fastapi import HTTPException
-from app.db.database import db
-from app.crud.users import serialize_user
+from app.schemas.students import StudentCreate, StudentUpdate
+from app.utils.mongo import fix_object_ids
+from app.utils.security import hash_password
+from app.db.database import students_collection as COLLECTION
+from app.db.database import courses_collection, users_collection, db
+from app.db.database import student_performance_collection
 
+# ------------------ Helper: Merge User & Student Data ------------------ #
+def merge_user_data(student_doc, user_doc):
+    if not student_doc:
+        return None
+    
+    # Base student data
+    merged = {**student_doc}
+    
+    if user_doc:
+        # Merge fields from User
+        merged["fullName"] = user_doc.get("fullName", "")
+        merged["email"] = user_doc.get("email", "")
+        merged["password"] = user_doc.get("password") # Required for login check in router
+        merged["role"] = user_doc.get("role", "student")
+        merged["status"] = user_doc.get("status", "active")
+        merged["createdAt"] = user_doc.get("createdAt")
+        merged["profileImageURL"] = user_doc.get("profileImageURL", "")
+       
+    
+    return fix_object_ids(merged)
 
-def serialize_student(s, user):
-    return {
-        "id": str(s["_id"]),
-        "userId": str(s["userId"]),
-        "user": serialize_user(user),  #  attach user
-        "enrolledCourses": s.get("enrolledCourses", []),
-        "completedCourses": s.get("completedCourses", []),
-        "status": s.get("status"),
-        "createdAt": s.get("createdAt"),
-        "updatedAt": s.get("updatedAt"),
+# ---------------------------------------------------------------------------
+# Create Student (Multi-Tenant)
+# ---------------------------------------------------------------------------
+async def create_student(student: StudentCreate, tenant_id: str):
+    data = student.dict()
+    
+    # Check if user exists
+    existing_user = await users_collection.find_one({"email": data["email"]})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
+
+    # 0. Check if tenant exists
+    tenant = await db.tenants.find_one({"_id": ObjectId(tenant_id)})
+    if not tenant:
+        raise HTTPException(status_code=404, detail=f"Tenant not found with ID: {tenant_id}")
+
+    # 1. Create USER document
+    user_doc = {
+        "fullName": data["fullName"],
+        "email": data["email"].lower(),
+        "password": hash_password(data["password"]), 
+        "role": "student",
+        "status": data.get("status", "active"),
+        "profileImageURL": data.get("profileImageURL", ""),
+        "contactNo": data.get("contactNo"),
+        "country": data.get("country"),
+        "tenantId": ObjectId(data.get("tenantId") or tenant_id), 
+        "createdAt": datetime.utcnow(),
+        "updatedAt": datetime.utcnow(),
+        "lastLogin": None
     }
 
+    user_result = await users_collection.insert_one(user_doc)
+    user_id = user_result.inserted_id
 
-async def get_student_by_user(user_id: str):
-    student = await db.students.find_one({"userId": ObjectId(user_id)})
-    if not student:
-        return None
-
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
-    if not user:
-        return None
-
-    return serialize_student(student, user)
-
-
-async def create_student(user_id: str):
-    data = {
-        "userId": ObjectId(user_id),
+    # 2. Create STUDENT document (Profile)
+    student_doc = {
+        "userId": user_id, 
+        "tenantId": ObjectId(tenant_id),
         "enrolledCourses": [],
         "completedCourses": [],
-        "status": "active",
         "createdAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow(),
     }
 
-    result = await db.students.insert_one(data)
-    student = await db.students.find_one({"_id": result.inserted_id})
+    result = await COLLECTION.insert_one(student_doc)
 
-    # Fetch the user document
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    performance_doc = {
+        "tenantId": ObjectId(tenant_id),
+        "studentId": result.inserted_id, 
+        "userId": user_id, 
+        "studentName": data["fullName"],
+        "totalPoints": 0,
+        "pointsThisWeek": 0,
+        "xp": 0,
+        "level": 1,
+        "xpToNextLevel": 300,
+        "badges": [],
+        "certificates": [],
+        "weeklyStudyTime": [],
+        "courseStats": [],
+        "createdAt": datetime.utcnow(),
+        "updatedAt": datetime.utcnow()
+    }
 
-    return serialize_student(student, user)
+    await student_performance_collection.insert_one(performance_doc)
+
+    new_student_combined = {
+        "_id": result.inserted_id,
+        "tenantId": ObjectId(tenant_id),
+        "fullName": user_doc["fullName"],
+        "email": user_doc["email"],
+        "password": user_doc["password"],
+        "profileImageURL": user_doc["profileImageURL"],
+        "contactNo": user_doc["contactNo"],
+        "country": user_doc["country"],
+        "status": user_doc["status"],
+        "role": user_doc["role"],
+        "enrolledCourses": student_doc["enrolledCourses"],
+        "completedCourses": student_doc["completedCourses"],
+        "createdAt": user_doc["createdAt"],
+        "updatedAt": user_doc["updatedAt"],
+        "lastLogin": user_doc["lastLogin"]
+    }
+    
+    return fix_object_ids(new_student_combined)
 
 
-async def update_student_profile(user_id: str, updates: dict):
-    student_fields = {}
-    user_fields = {}
+# ---------------------------------------------------------------------------
+# Login (Email only — tenant irrelevant)
+# ---------------------------------------------------------------------------
+async def get_student_by_email(email: str):
+    # Now we must find in USERS first
+    user = await users_collection.find_one({"email": email, "role": "student"})
+    if not user:
+        return None
+    
+    # Then find the corresponding STUDENT profile
+    student = await COLLECTION.find_one({"userId": user["_id"]})
+    if not student:
+        return None
+        
+    return merge_user_data(student, user)
 
-    # ---- student fields ----
-    for field in ["status", "enrolledCourses", "completedCourses"]:
-        if field in updates:
-            student_fields[field] = updates[field]
 
-    # ---- user fields ----
-    for field in ["fullName", "profileImageURL", "contactNo", "country"]:
-        if field in updates:
-            user_fields[field] = updates[field]
+# ---------------------------------------------------------------------------
+# Get Student by ID + Tenant
+# ---------------------------------------------------------------------------
+async def get_student_by_id(student_id: str, tenantId: str):
+    # student_id here is the ID in STUDENTS collection
+    student = await COLLECTION.find_one({
+        "_id": ObjectId(student_id),
+        "tenantId": ObjectId(tenantId)
+    })
+    
+    if not student:
+        return None
+        
+    user = await users_collection.find_one({"_id": student.get("userId")})
+    return merge_user_data(student, user)
 
-    if student_fields:
-        student_fields["updatedAt"] = datetime.utcnow()
-        await db.students.update_one(
-            {"userId": ObjectId(user_id)}, {"$set": student_fields}
-        )
 
-    if user_fields:
-        user_fields["updatedAt"] = datetime.utcnow()
-        await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": user_fields})
+# ---------------------------------------------------------------------------
+# List All Students (Optional Tenant)
+# ---------------------------------------------------------------------------
+async def list_students(tenantId: str = None):
+    # Use aggregation to join
+    pipeline = []
+    
+    if tenantId:
+        pipeline.append({"$match": {"tenantId": ObjectId(tenantId)}})
 
-    # ---- fetch updated documents ----
-    student = await db.students.find_one({"userId": ObjectId(user_id)})
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    pipeline.extend([
+        {"$lookup": {
+            "from": "users",
+            "localField": "userId",
+            "foreignField": "_id",
+            "as": "userDetails"
+        }},
+        {"$unwind": {"path": "$userDetails", "preserveNullAndEmptyArrays": True}},
+    ])
+    
+    students_cursor = COLLECTION.aggregate(pipeline)
+    results = []
+    async for doc in students_cursor:
+        user_info = doc.pop("userDetails", {}) or {}
+        # Merge
+        merged = {**doc, **user_info}
+       
+        
+        # Explicit mapping:
+        merged_obj = {
+            "_id": doc["_id"],
+            "tenantId": doc.get("tenantId"),
+            "fullName": user_info.get("fullName", ""),
+            "email": user_info.get("email", ""),
+            "role": user_info.get("role", "student"),
+            "status": user_info.get("status", "active"),
+            "profileImageURL": user_info.get("profileImageURL", ""),
+            "contactNo": user_info.get("contactNo"),
+            "country": user_info.get("country"),
+            "enrolledCourses": doc.get("enrolledCourses", []),
+            "completedCourses": doc.get("completedCourses", []),
+            "createdAt": user_info.get("createdAt"), # Use User's createdAt
+            "updatedAt": user_info.get("updatedAt"),
+            "lastLogin": user_info.get("lastLogin"),
+        }
+        results.append(fix_object_ids(merged_obj))
+        
+    return results
 
-    if not student or not user:
+
+# ---------------------------------------------------------------------------
+# Update Student
+# ---------------------------------------------------------------------------
+async def update_student(student_id: str, tenantId: str, update: StudentUpdate):
+    # 1. Find student
+    if not ObjectId.is_valid(student_id) or not ObjectId.is_valid(tenantId):
         return None
 
-    return serialize_student(student, user)
+    student = await COLLECTION.find_one({
+        "_id": ObjectId(student_id),
+        "tenantId": ObjectId(tenantId)
+    })
+    
+    if not student:
+        return None
+        
+    user_id = student.get("userId")
+    if not user_id:
+        return None
+    
+    # Exclude unset fields (don't overwrite with nulls)
+    update_dict = update.dict(exclude_unset=True)
+    
+    # 2. Clean data: Filter out empty strings for optional fields to avoid overwriting with empty
+    # except for profileImageURL which might be cleared intentionally
+    update_data = {}
+    for k, v in update_dict.items():
+        if v is None:
+            continue
+        if isinstance(v, str) and v.strip() == "" and k != "profileImageURL":
+            continue
+        update_data[k] = v
 
+    if not update_data:
+        return await get_student_by_id(student_id, tenantId)
 
-async def assign_student_to_tenant(student_id: str, tenant_id: str):
-    if not ObjectId.is_valid(student_id):
-        raise HTTPException(status_code=400, detail="Invalid student ID")
-    if not ObjectId.is_valid(tenant_id):
-        raise HTTPException(status_code=400, detail="Invalid tenant ID")
+    # Normalize data
+    if "email" in update_data:
+        update_data["email"] = update_data["email"].lower()
+    
+    update_data["updatedAt"] = datetime.utcnow()
 
-    # check tenant exists
-    tenant = await db.tenants.find_one({"_id": ObjectId(tenant_id), "isDeleted": False})
-    if not tenant:
-        raise HTTPException(status_code=404, detail="Tenant not found")
-
-    # update student
-    result = await db.students.update_one(
-        {"_id": ObjectId(student_id)},
-        {"$set": {"tenantId": ObjectId(tenant_id), "updatedAt": datetime.utcnow()}},
+    # ✅ Update USERS collection
+    await db.users.update_one(
+        {"_id": user_id},
+        {"$set": update_data}
     )
 
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Student not found")
+    # ✅ Update STUDENT collection timestamp
+    await COLLECTION.update_one(
+        {"_id": ObjectId(student_id)},
+        {"$set": {"updatedAt": datetime.utcnow()}}
+    )
 
-    # fetch updated student
-    student = await db.students.find_one({"_id": ObjectId(student_id)})
-    user = await db.users.find_one({"_id": ObjectId(student["userId"])})
+    # ✅ ALSO update STUDENT PERFORMANCE if name changes
+    if "fullName" in update_data:
+        await student_performance_collection.update_one(
+            {
+                "studentId": ObjectId(student_id),
+                "tenantId": ObjectId(tenantId)
+            },
+            {
+                "$set": {
+                    "studentName": update_data["fullName"],
+                    "updatedAt": datetime.utcnow()
+                }
+            }
+        )
 
-    from app.crud.students import serialize_student
-
-    return serialize_student(student, user)
+    return await get_student_by_id(student_id, tenantId)
 
 
-# in app/crud/students.py
-async def enroll_student_in_course(student_id: str, course_id: str):
-    from app.db.database import db
+# ---------------------------------------------------------------------------
+# Delete Student
+# ---------------------------------------------------------------------------
+async def delete_student(student_id: str, tenant_id: str):
 
-    # Validate IDs
-    if not ObjectId.is_valid(student_id) or not ObjectId.is_valid(course_id):
-        raise HTTPException(status_code=400, detail="Invalid ID")
+    # STEP 1 — Fetch student before deleting
+    student = await COLLECTION.find_one({
+        "_id": ObjectId(student_id),
+        "tenantId": ObjectId(tenant_id)
+    })
 
-    # Get course
-    course = await db.courses.find_one({"_id": ObjectId(course_id)})
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-
-    # Get student
-    student = await db.students.find_one({"_id": ObjectId(student_id)})
     if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
+        return False
 
-    # Update tenantId if not set
-    if "tenantId" not in student or not student.get("tenantId"):
-        await db.students.update_one(
-            {"_id": ObjectId(student_id)},
-            {"$set": {"tenantId": course["tenantId"], "updatedAt": datetime.utcnow()}},
-        )
+    # STEP 2 — Decrease enrolledStudents count for each course
+    enrolled_courses = student.get("enrolledCourses", [])
 
-    # Enroll student in course
-    enrolled = student.get("enrolledCourses", [])
-    if str(course["_id"]) not in enrolled:
-        enrolled.append(str(course["_id"]))
-        await db.students.update_one(
-            {"_id": ObjectId(student_id)},
-            {"$set": {"enrolledCourses": enrolled, "updatedAt": datetime.utcnow()}},
-        )
+    for course_id in enrolled_courses:
+        if ObjectId.is_valid(course_id):
+            await courses_collection.update_one(
+                {"_id": ObjectId(course_id)},
+                {"$inc": {"enrolledStudents": -1}}
+            )
 
-    # Fetch updated student
-    student = await db.students.find_one({"_id": ObjectId(student_id)})
-    user = await db.users.find_one({"_id": ObjectId(student["userId"])})
+    # STEP 3 — Delete the student from the STUDENTS collection
+    result = await COLLECTION.delete_one({
+        "_id": ObjectId(student_id),
+        "tenantId": ObjectId(tenant_id)
+    })
 
-    return serialize_student(student, user)
+    # If student was not deleted → stop
+    if result.deleted_count == 0:
+        return False
+        
+    # STEP 3.5 — Delete User (Cascading Delete for Students)
+    if student.get("userId"):
+        user_id = student["userId"]
+        await users_collection.delete_one({"_id": ObjectId(user_id) if not isinstance(user_id, ObjectId) else user_id})
+
+    # STEP 4 — Delete student performance document for this student + tenant
+    await student_performance_collection.delete_one({
+        "studentId": ObjectId(student_id),
+        "tenantId": ObjectId(tenant_id)
+    })
+
+
+    return True
+
+# ---------------------------------------------------------------------------
+# Get Student by User ID (Helper)
+# ---------------------------------------------------------------------------
+async def get_student_by_user(user_id: str):
+    if isinstance(user_id, str):
+        user_id = ObjectId(user_id)
+        
+    student = await COLLECTION.find_one({"userId": user_id})
+    if not student:
+        return None
+        
+    user = await users_collection.find_one({"_id": user_id})
+    return merge_user_data(student, user)

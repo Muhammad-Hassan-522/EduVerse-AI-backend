@@ -20,6 +20,7 @@ class QuizCreate(BaseModel):
 
     # IDs of related entities (validated later in router)
     courseId: str
+    courseName: str  # Course name for display purposes
     teacherId: str
     tenantId: str
 
@@ -66,6 +67,7 @@ class QuizResponse(BaseModel):
     """Schema returned to client after create/get/update."""
     id: str
     courseId: str
+    courseName: Optional[str] = None
     teacherId: str
     tenantId: str
     quizNumber: int
@@ -77,4 +79,4 @@ class QuizResponse(BaseModel):
     aiGenerated: bool
     status: str
     createdAt: datetime
-    updatedAt: datetime
+    updatedAt: Optional[datetime] = None

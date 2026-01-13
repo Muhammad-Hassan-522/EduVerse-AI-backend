@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from app.auth.dependencies import get_current_user
 from app.crud.student_performance import StudentPerformanceCRUD
 
-router = APIRouter(prefix="/studentPerformance", tags=["Student Performance"])
+router = APIRouter(prefix="/studentPerformance", tags=["Student Performance"], dependencies=[Depends(get_current_user)])
 
 
 # -------------------- GLOBAL LEADERBOARDS --------------------
@@ -24,6 +25,16 @@ async def tenant_full(tenantId: str):
 @router.get("/{tenantId}/leaderboard-top5")
 async def tenant_top5(tenantId: str):
     return await StudentPerformanceCRUD.tenant_top5(tenantId)
+
+
+# -------------------- TEACHER SPECIFIC --------------------
+@router.get("/teacher/{teacher_id}")
+async def get_teacher_student_performances(teacher_id: str, tenantId: str):
+    """
+    Get all student performances for a specific teacher's courses.
+    Requires tenantId as query parameter.
+    """
+    return await StudentPerformanceCRUD.get_teacher_performances(teacher_id, tenantId)
 
 
 # -------------------- STUDENT PERFORMANCE --------------------
@@ -75,3 +86,5 @@ async def weekly_time(tenantId: str, studentId: str, weekStart: str, minutes: in
 @router.post("/{tenantId}/{studentId}/add-points")
 async def add_points(tenantId: str, studentId: str, points: int):
     return await StudentPerformanceCRUD.add_points(studentId, tenantId, points)
+
+

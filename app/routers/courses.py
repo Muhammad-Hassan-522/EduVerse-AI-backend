@@ -1,6 +1,6 @@
 
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import List, Optional
 from app.schemas.courses import (
     CourseCreate, 
@@ -10,7 +10,9 @@ from app.schemas.courses import (
 )
 from app.crud.courses import course_crud
 
-router = APIRouter(prefix="/courses", tags=["courses"])
+from app.auth.dependencies import get_current_user
+
+router = APIRouter(prefix="/courses", tags=["courses"], dependencies=[Depends(get_current_user)])
 
 
 @router.post("/", response_model=CourseResponse, status_code=201)

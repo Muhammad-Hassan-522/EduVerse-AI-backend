@@ -1,38 +1,43 @@
-from pydantic import BaseModel
-from typing import List, Optional
+from pydantic import BaseModel, EmailStr
+from typing import Optional, List
 from datetime import datetime
-from app.schemas.users import UserResponse
-
 
 class StudentCreate(BaseModel):
-    userId: str
+    fullName: str
+    email: EmailStr
+    password: str
+    profileImageURL: Optional[str] = ""
+    contactNo: Optional[str] = None
+    country: Optional[str] = None
+    status: str = "active"
 
+class StudentLogin(BaseModel):
+    email: EmailStr
+    password: str
 
 class StudentUpdate(BaseModel):
-    # ---- user fields ----
     fullName: Optional[str] = None
+    email: Optional[EmailStr] = None
     profileImageURL: Optional[str] = None
     contactNo: Optional[str] = None
     country: Optional[str] = None
-    tenantId: Optional[str] = None
-
-    # ---- student fields ----
     status: Optional[str] = None
-    enrolledCourses: Optional[List[str]] = None
-    completedCourses: Optional[List[str]] = None
-
-    model_config = {"from_attributes": True}
-
 
 class StudentResponse(BaseModel):
     id: str
-    userId: str
-    tenantId: Optional[str] = None  # include in response
-    user: UserResponse  # NESTED USER
-    enrolledCourses: List[str] = []
-    completedCourses: List[str] = []
-    status: str
+    fullName: str
+    email: EmailStr
+    profileImageURL: Optional[str] = None
+    contactNo: Optional[str] = None
+    country: Optional[str] = None
+    status: Optional[str]
+    role: str
+    tenantId: str
+    enrolledCourses: List[str]
+    completedCourses: List[str]
     createdAt: datetime
     updatedAt: datetime
+    lastLogin: Optional[datetime] = None
 
-    model_config = {"from_attributes": True}
+    class Config:
+        from_attributes = True

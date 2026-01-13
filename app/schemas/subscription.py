@@ -1,12 +1,16 @@
-# app/schemas/subscription.py
 from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
 class PaymentHistory(BaseModel):
-    created_at: datetime
+    paymentId: str
+    amount: float
+    date: datetime
+    method: str
+    status: str
 
 class Subscription(BaseModel):
+    id: Optional[str] = None
     plan: str
     max_students: int
     max_teachers: int
@@ -18,4 +22,9 @@ class Subscription(BaseModel):
     status: str
     expiry_date: datetime
     payment_history: Optional[List[PaymentHistory]] = []
+    userId: Optional[str] = None
     tenantId: str
+
+    class Config:
+        from_attributes = True
+        populate_by_name = True
