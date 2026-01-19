@@ -188,15 +188,11 @@ async def create_assignment_route(
 ):
     validate_object_id(data.courseId, "courseId")
 
-    payload = data.model_dump()
-
-    # OVERRIDE SECURITY-SENSITIVE FIELDS
-    payload["teacherId"] = current_user["user_id"]
-    payload["tenantId"] = current_user["tenant_id"]
-    payload["uploadedAt"] = datetime.utcnow()
-    payload["status"] = payload.get("status", "active")
-
-    return await create_assignment(payload)
+    return await create_assignment(
+        data,
+        teacher_id=current_user["user_id"],
+        tenant_id=current_user["tenant_id"],
+    )
 
 
 @router.get("/", response_model=dict)

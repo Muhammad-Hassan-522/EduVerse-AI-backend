@@ -55,8 +55,8 @@ from datetime import datetime
 
 class AssignmentCreate(BaseModel):
     courseId: str
-    teacherId: str
-    tenantId: str
+    # teacherId: str
+    # tenantId: str
 
     title: str = Field(..., min_length=3)
     description: Optional[str] = None

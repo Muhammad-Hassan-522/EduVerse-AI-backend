@@ -360,13 +360,18 @@ async def get_assignment(id: str, tenant_id: str) -> dict | None:
 # ---------------------------
 # UPDATE ASSIGNMENT
 # ---------------------------
-async def update_assignment(id: str, teacher_id: str, tenant_id: str, updates: dict):
+async def update_assignment(
+    assignment_id: str, teacher_id: str, tenant_id: str, updates: dict
+):
     if not updates:
         raise HTTPException(status_code=400, detail="No updates provided")
 
     # Ensure IDs
     assignment = await db.assignments.find_one(
-        {"_id": to_oid(id, "assignmentId"), "tenantId": to_oid(tenant_id, "tenantId")}
+        {
+            "_id": to_oid(assignment_id, "assignmentId"),
+            "tenantId": to_oid(tenant_id, "tenantId"),
+        }
     )
     if not assignment:
         return None
@@ -378,10 +383,10 @@ async def update_assignment(id: str, teacher_id: str, tenant_id: str, updates: d
     updates_to_set["updatedAt"] = datetime.utcnow()
 
     await db.assignments.update_one(
-        {"_id": to_oid(id, "assignmentId")}, {"$set": updates_to_set}
+        {"_id": to_oid(assignment_id, "assignmentId")}, {"$set": updates_to_set}
     )
     updated_assignment = await db.assignments.find_one(
-        {"_id": to_oid(id, "assignmentId")}
+        {"_id": to_oid(assignment_id, "assignmentId")}
     )
     return serialize_assignment(updated_assignment)
 
@@ -389,14 +394,17 @@ async def update_assignment(id: str, teacher_id: str, tenant_id: str, updates: d
 # ---------------------------
 # DELETE ASSIGNMENT
 # ---------------------------
-async def delete_assignment(id: str, teacher_id: str, tenant_id: str):
+async def delete_assignment(assignment_id: str, teacher_id: str, tenant_id: str):
     assignment = await db.assignments.find_one(
-        {"_id": to_oid(id, "assignmentId"), "tenantId": to_oid(tenant_id, "tenantId")}
+        {
+            "_id": to_oid(assignment_id, "assignmentId"),
+            "tenantId": to_oid(tenant_id, "tenantId"),
+        }
     )
     if not assignment:
         return None
     if str(assignment["teacherId"]) != teacher_id:
         return "UNAUTHORIZED"
 
-    await db.assignments.delete_one({"_id": to_oid(id, "assignmentId")})
+    await db.assignments.delete_one({"_id": to_oid(assignment_id, "assignmentId")})
     return True
