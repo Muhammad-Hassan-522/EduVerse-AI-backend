@@ -53,3 +53,11 @@ def require_role(*allowed_roles: str):
         return current_user
 
     return role_checker
+
+
+def require_tenant(current_user=Depends(get_current_user)):
+    if not current_user.get("tenant_id"):
+        raise HTTPException(
+            status_code=403, detail="Tenant context required for this operation"
+        )
+    return current_user

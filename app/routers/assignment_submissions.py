@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 from bson import ObjectId
-from app.auth.dependencies import require_role
+from app.auth.dependencies import require_role, require_tenant
 from app.schemas.assignment_submissions import (
     AssignmentSubmissionCreate,
+    AssignmentSubmissionUpdate,
     AssignmentSubmissionResponse,
 )
 from app.crud.assignment_submissions import (
@@ -21,9 +22,16 @@ router = APIRouter(
 )
 
 
-def validate_object_id(id: str):
+def validate_object_id(id: str, name: str = "id"):
     if not ObjectId.is_valid(id):
-        raise HTTPException(status_code=400, detail="Invalid ObjectId format")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid ObjectId format for {name}"
+        )
+
+
+def clean_updates(data: dict):
+    """Remove empty strings or null-like values from updates."""
+    return {k: v for k, v in data.items() if v not in [None, "", [], {}]}
 
 
 # ===============================
@@ -33,15 +41,24 @@ def validate_object_id(id: str):
 async def create_submission_route(
     data: AssignmentSubmissionCreate,
     current_user=Depends(require_role("student")),
+    _=Depends(require_tenant),  # enforce tenant
 ):
-    validate_object_id(data.assignmentId)
-    validate_object_id(data.courseId)
+    if not data.assignmentId or not data.courseId or not data.fileUrl:
+        raise HTTPException(
+            status_code=400, detail="assignmentId, courseId, and fileUrl are required"
+        )
+
+    validate_object_id(data.assignmentId, "assignmentId")
+    validate_object_id(data.courseId, "courseId")
 
     submission = await create_submission(
         data=data,
         student_id=current_user["user_id"],
         tenant_id=current_user["tenant_id"],
     )
+
+    if not submission:
+        raise HTTPException(status_code=500, detail="Failed to create submission")
 
     return submission
 
@@ -52,8 +69,12 @@ async def create_submission_route(
 @router.get("/", response_model=List[AssignmentSubmissionResponse])
 async def get_all_submissions_route(
     current_user=Depends(require_role("admin", "teacher")),
+    _=Depends(require_tenant),
 ):
-    return await get_all_submissions(current_user["tenant_id"])
+    submissions = await get_all_submissions(current_user["tenant_id"])
+    if submissions is None:
+        return []
+    return submissions
 
 
 # ===============================
@@ -62,11 +83,15 @@ async def get_all_submissions_route(
 @router.get("/me", response_model=List[AssignmentSubmissionResponse])
 async def get_my_submissions(
     current_user=Depends(require_role("student")),
+    _=Depends(require_tenant),
 ):
-    return await get_submissions_by_student(
+    submissions = await get_submissions_by_student(
         student_id=current_user["user_id"],
         tenant_id=current_user["tenant_id"],
     )
+    if submissions is None:
+        return []
+    return submissions
 
 
 # ===============================
@@ -79,13 +104,17 @@ async def get_my_submissions(
 async def get_by_assignment(
     assignment_id: str,
     current_user=Depends(require_role("teacher", "admin")),
+    _=Depends(require_tenant),
 ):
-    validate_object_id(assignment_id)
+    validate_object_id(assignment_id, "assignmentId")
 
-    return await get_submissions_by_assignment(
+    submissions = await get_submissions_by_assignment(
         assignment_id=assignment_id,
         tenant_id=current_user["tenant_id"],
     )
+    if submissions is None:
+        return []
+    return submissions
 
 
 # ===============================
@@ -94,17 +123,29 @@ async def get_by_assignment(
 @router.put("/{submission_id}", response_model=AssignmentSubmissionResponse)
 async def grade_submission_route(
     submission_id: str,
-    update,
+    update: AssignmentSubmissionUpdate,
     current_user=Depends(require_role("teacher", "admin")),
+    _=Depends(require_tenant),
 ):
-    validate_object_id(submission_id)
+    validate_object_id(submission_id, "submissionId")
 
-    return await grade_submission(
+    if not update or (update.obtainedMarks is None and update.feedback is None):
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    # Clean empty strings
+    update_data = clean_updates(update.model_dump(exclude_unset=True))
+
+    submission = await grade_submission(
         submission_id=submission_id,
         tenant_id=current_user["tenant_id"],
-        marks=update.obtainedMarks,
-        feedback=update.feedback,
+        marks=update_data.get("obtainedMarks"),
+        feedback=update_data.get("feedback"),
     )
+
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    return submission
 
 
 # ===============================
@@ -114,8 +155,9 @@ async def grade_submission_route(
 async def delete_submission_route(
     submission_id: str,
     current_user=Depends(require_role("admin")),
+    _=Depends(require_tenant),
 ):
-    validate_object_id(submission_id)
+    validate_object_id(submission_id, "submissionId")
 
     success = await delete_submission(
         submission_id=submission_id,
