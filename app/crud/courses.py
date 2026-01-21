@@ -2,7 +2,7 @@
 from bson import ObjectId
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from app.db.database import get_courses_collection, get_students_collection, db
+from app.db.database import get_courses_collection, get_students_collection, db, users_collection
 from app.schemas.courses import CourseCreate, CourseUpdate
 
 class CourseCRUD:
@@ -10,6 +10,7 @@ class CourseCRUD:
     def __init__(self):
         self.collection = get_courses_collection()
         self.students_collection = get_students_collection()
+        self.users_collection = users_collection
 
     def clean_update_data(self, update_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -693,6 +694,266 @@ class CourseCRUD:
             "success": True,
             "message": f"Found {len(courses)} enrolled courses",
             "courses": courses
+        }
+
+    async def reorder_lessons(self, course_id: str, tenant_id: str, module_id: str, lesson_ids: List[str]) -> dict:
+        """
+        Reorder lessons within a specific module.
+        
+        Args:
+            course_id: The course ID
+            tenant_id: The tenant ID for validation
+            module_id: The module ID containing the lessons
+            lesson_ids: Ordered list of lesson IDs representing the new order
+            
+        Returns:
+            dict with success status and updated course or error message
+        """
+        # Validate IDs
+        if not ObjectId.is_valid(course_id):
+            return {"success": False, "message": f"Invalid course ID format: {course_id}"}
+        if not ObjectId.is_valid(tenant_id):
+            return {"success": False, "message": f"Invalid tenant ID format: {tenant_id}"}
+        
+        # Find the course
+        course = await self.collection.find_one({
+            "_id": ObjectId(course_id),
+            "tenantId": ObjectId(tenant_id)
+        })
+        
+        if not course:
+            return {"success": False, "message": "Course not found or belongs to different tenant"}
+        
+        # Find the module and reorder its lessons
+        modules = course.get("modules", [])
+        module_found = False
+        
+        for module in modules:
+            if module.get("id") == module_id:
+                module_found = True
+                lessons = module.get("lessons", [])
+                
+                # Create a map of lesson_id -> lesson
+                lesson_map = {lesson.get("id"): lesson for lesson in lessons}
+                
+                # Reorder lessons based on the provided order
+                reordered_lessons = []
+                for idx, lesson_id in enumerate(lesson_ids):
+                    if lesson_id in lesson_map:
+                        lesson = lesson_map[lesson_id]
+                        lesson["order"] = idx
+                        reordered_lessons.append(lesson)
+                
+                # Add any lessons not in the reorder list at the end
+                for lesson in lessons:
+                    if lesson.get("id") not in lesson_ids:
+                        lesson["order"] = len(reordered_lessons)
+                        reordered_lessons.append(lesson)
+                
+                module["lessons"] = reordered_lessons
+                break
+        
+        if not module_found:
+            return {"success": False, "message": f"Module not found with ID: {module_id}"}
+        
+        # Update the course
+        update_result = await self.collection.update_one(
+            {"_id": ObjectId(course_id)},
+            {
+                "$set": {
+                    "modules": modules,
+                    "updatedAt": datetime.now()
+                }
+            }
+        )
+        
+        if update_result.modified_count == 0:
+            return {"success": False, "message": "Failed to update course"}
+        
+        # Return updated course
+        updated_course = await self.collection.find_one({"_id": ObjectId(course_id)})
+        return {
+            "success": True,
+            "message": "Lessons reordered successfully",
+            "course": self._serialize_course(updated_course)
+        }
+
+    async def reorder_modules(self, course_id: str, tenant_id: str, module_ids: List[str]) -> dict:
+        """
+        Reorder modules within a course.
+        
+        Args:
+            course_id: The course ID
+            tenant_id: The tenant ID for validation
+            module_ids: Ordered list of module IDs representing the new order
+            
+        Returns:
+            dict with success status and updated course or error message
+        """
+        # Validate IDs
+        if not ObjectId.is_valid(course_id):
+            return {"success": False, "message": f"Invalid course ID format: {course_id}"}
+        if not ObjectId.is_valid(tenant_id):
+            return {"success": False, "message": f"Invalid tenant ID format: {tenant_id}"}
+        
+        # Find the course
+        course = await self.collection.find_one({
+            "_id": ObjectId(course_id),
+            "tenantId": ObjectId(tenant_id)
+        })
+        
+        if not course:
+            return {"success": False, "message": "Course not found or belongs to different tenant"}
+        
+        # Reorder modules
+        modules = course.get("modules", [])
+        module_map = {module.get("id"): module for module in modules}
+        
+        reordered_modules = []
+        for idx, module_id in enumerate(module_ids):
+            if module_id in module_map:
+                module = module_map[module_id]
+                module["order"] = idx
+                reordered_modules.append(module)
+        
+        # Add any modules not in the reorder list at the end
+        for module in modules:
+            if module.get("id") not in module_ids:
+                module["order"] = len(reordered_modules)
+                reordered_modules.append(module)
+        
+        # Update the course
+        update_result = await self.collection.update_one(
+            {"_id": ObjectId(course_id)},
+            {
+                "$set": {
+                    "modules": reordered_modules,
+                    "updatedAt": datetime.now()
+                }
+            }
+        )
+        
+        if update_result.modified_count == 0:
+            return {"success": False, "message": "Failed to update course"}
+        
+        # Return updated course
+        updated_course = await self.collection.find_one({"_id": ObjectId(course_id)})
+        return {
+            "success": True,
+            "message": "Modules reordered successfully",
+            "course": self._serialize_course(updated_course)
+        }
+
+    async def publish_course(self, course_id: str, tenant_id: str, publish: bool = True) -> dict:
+        """
+        Publish or unpublish a course.
+        
+        Args:
+            course_id: The course ID
+            tenant_id: The tenant ID for validation
+            publish: True to publish, False to unpublish (set to draft)
+            
+        Returns:
+            dict with success status and updated course or error message
+        """
+        # Validate IDs
+        if not ObjectId.is_valid(course_id):
+            return {"success": False, "message": f"Invalid course ID format: {course_id}"}
+        if not ObjectId.is_valid(tenant_id):
+            return {"success": False, "message": f"Invalid tenant ID format: {tenant_id}"}
+        
+        # Find the course
+        course = await self.collection.find_one({
+            "_id": ObjectId(course_id),
+            "tenantId": ObjectId(tenant_id)
+        })
+        
+        if not course:
+            return {"success": False, "message": "Course not found or belongs to different tenant"}
+        
+        # Determine new status
+        new_status = "published" if publish else "draft"
+        current_status = course.get("status", "draft")
+        
+        if current_status == new_status:
+            return {
+                "success": True,
+                "message": f"Course is already {new_status}",
+                "course": self._serialize_course(course)
+            }
+        
+        # Update the course status
+        update_result = await self.collection.update_one(
+            {"_id": ObjectId(course_id)},
+            {
+                "$set": {
+                    "status": new_status,
+                    "updatedAt": datetime.now(),
+                    "publishedAt": datetime.now() if publish else None
+                }
+            }
+        )
+        
+        if update_result.modified_count == 0:
+            return {"success": False, "message": "Failed to update course status"}
+        
+        # Return updated course
+        updated_course = await self.collection.find_one({"_id": ObjectId(course_id)})
+        return {
+            "success": True,
+            "message": f"Course {'published' if publish else 'unpublished'} successfully",
+            "course": self._serialize_course(updated_course)
+        }
+
+    async def get_enrolled_students(self, course_id: str, tenantId: str) -> dict:
+        """
+        Get all students enrolled in a specific course.
+        
+        Returns student details including enrollment info.
+        """
+        # Validate IDs
+        if not ObjectId.is_valid(course_id):
+            return {"success": False, "message": "Invalid course ID format"}
+        if not ObjectId.is_valid(tenantId):
+            return {"success": False, "message": "Invalid tenant ID format"}
+        
+        tenant_object_id = ObjectId(tenantId)
+        
+        # Verify course exists and belongs to tenant
+        course = await self.collection.find_one({
+            "_id": ObjectId(course_id),
+            "tenantId": tenant_object_id
+        })
+        
+        if not course:
+            return {"success": False, "message": "Course not found or belongs to different tenant"}
+        
+        # Find all students who have this course in their enrolledCourses array
+        cursor = self.students_collection.find({
+            "tenantId": tenant_object_id,
+            "enrolledCourses": course_id  # Course ID stored as string
+        })
+        
+        students = []
+        async for student in cursor:
+            # Get user details for email and fullName
+            user = await self.users_collection.find_one({"_id": student.get("userId")})
+            
+            students.append({
+                "_id": str(student["_id"]),
+                "id": str(student["_id"]),
+                "fullName": user.get("fullName", "") if user else student.get("fullName", "Unknown"),
+                "email": user.get("email", "") if user else student.get("email", ""),
+                "enrolledAt": student.get("createdAt", datetime.utcnow()).isoformat() if isinstance(student.get("createdAt"), datetime) else str(student.get("createdAt", "")),
+                "progress": student.get("progress", {}).get(course_id, 0) if isinstance(student.get("progress"), dict) else 0,
+                "lessonsCompleted": student.get("lessonsCompleted", {}).get(course_id, 0) if isinstance(student.get("lessonsCompleted"), dict) else 0,
+                "lastAccessed": student.get("lastAccessed", {}).get(course_id) if isinstance(student.get("lastAccessed"), dict) else None,
+            })
+        
+        return {
+            "success": True,
+            "students": students,
+            "count": len(students)
         }
 
 # Create a single instance

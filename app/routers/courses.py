@@ -6,7 +6,10 @@ from app.schemas.courses import (
     CourseCreate, 
     CourseUpdate, 
     CourseResponse, 
-    CourseEnrollment
+    CourseEnrollment,
+    ReorderLessonsRequest,
+    ReorderModulesRequest,
+    PublishCourseRequest
 )
 from app.crud.courses import course_crud
 
@@ -217,6 +220,59 @@ async def unenroll_from_course(enrollment: CourseEnrollment):
     return result
 
 
+@router.get("/{course_id}/students")
+async def get_course_students(
+    course_id: str,
+    tenantId: str = Query(..., description="Tenant ID (required)")
+):
+    """
+    Get all students enrolled in a specific course.
+    
+    tenantId is required as a query parameter.
+    
+    Returns:
+    - 400: Invalid course ID or tenant ID format
+    - 404: Course not found or belongs to different tenant
+    - 200: List of enrolled students
+    """
+    result = await course_crud.get_enrolled_students(course_id, tenantId)
+    
+    if not result["success"]:
+        message = result["message"]
+        
+        if "Invalid" in message and "format" in message:
+            raise HTTPException(status_code=400, detail=message)
+        elif "not found" in message or "different tenant" in message:
+            raise HTTPException(status_code=404, detail=message)
+        else:
+            raise HTTPException(status_code=400, detail=message)
+    
+    return result["students"]
+
+
+@router.delete("/{course_id}/students/{student_id}", status_code=200)
+async def unenroll_student_from_course(
+    course_id: str,
+    student_id: str,
+    tenantId: str = Query(..., description="Tenant ID (required)")
+):
+    """
+    Unenroll a specific student from a course.
+    
+    tenantId is required as a query parameter.
+    
+    Returns:
+    - 400: Invalid IDs, not enrolled, or validation error
+    - 200: Successfully unenrolled
+    """
+    result = await course_crud.unenroll_student(course_id, student_id, tenantId)
+    
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    return result
+
+
 @router.get("/student/{student_id}", response_model=List[CourseResponse])
 async def get_student_courses(
     student_id: str,
@@ -248,3 +304,114 @@ async def get_student_courses(
             raise HTTPException(status_code=400, detail=message)
     
     return result["courses"]
+
+
+# Course Builder Endpoints
+
+@router.patch("/{course_id}/reorder/lessons", response_model=CourseResponse)
+async def reorder_lessons(
+    course_id: str,
+    reorder_request: ReorderLessonsRequest,
+    tenantId: str = Query(..., description="Tenant ID (required)")
+):
+    """
+    Reorder lessons within a specific module.
+    
+    Requires moduleId and lessonIds (ordered list) in request body.
+    tenantId is required as a query parameter.
+    
+    Returns:
+    - 400: Invalid IDs or module not found
+    - 404: Course not found or belongs to different tenant
+    - 200: Updated course with reordered lessons
+    """
+    result = await course_crud.reorder_lessons(
+        course_id,
+        tenantId,
+        reorder_request.moduleId,
+        reorder_request.lessonIds
+    )
+    
+    if not result["success"]:
+        message = result["message"]
+        
+        if "Invalid" in message and "format" in message:
+            raise HTTPException(status_code=400, detail=message)
+        elif "not found" in message:
+            raise HTTPException(status_code=404, detail=message)
+        else:
+            raise HTTPException(status_code=400, detail=message)
+    
+    return result["course"]
+
+
+@router.patch("/{course_id}/reorder/modules", response_model=CourseResponse)
+async def reorder_modules(
+    course_id: str,
+    reorder_request: ReorderModulesRequest,
+    tenantId: str = Query(..., description="Tenant ID (required)")
+):
+    """
+    Reorder modules within a course.
+    
+    Requires moduleIds (ordered list) in request body.
+    tenantId is required as a query parameter.
+    
+    Returns:
+    - 400: Invalid course ID or tenant ID format
+    - 404: Course not found or belongs to different tenant
+    - 200: Updated course with reordered modules
+    """
+    result = await course_crud.reorder_modules(
+        course_id,
+        tenantId,
+        reorder_request.moduleIds
+    )
+    
+    if not result["success"]:
+        message = result["message"]
+        
+        if "Invalid" in message and "format" in message:
+            raise HTTPException(status_code=400, detail=message)
+        elif "not found" in message:
+            raise HTTPException(status_code=404, detail=message)
+        else:
+            raise HTTPException(status_code=400, detail=message)
+    
+    return result["course"]
+
+
+@router.post("/{course_id}/publish", response_model=CourseResponse)
+async def publish_course(
+    course_id: str,
+    publish_request: PublishCourseRequest,
+    tenantId: str = Query(..., description="Tenant ID (required)")
+):
+    """
+    Publish or unpublish a course.
+    
+    Set publish=true to publish, publish=false to unpublish (set to draft).
+    tenantId is required as a query parameter.
+    
+    Returns:
+    - 400: Invalid course ID or tenant ID format
+    - 404: Course not found or belongs to different tenant
+    - 200: Updated course with new status
+    """
+    result = await course_crud.publish_course(
+        course_id,
+        tenantId,
+        publish_request.publish
+    )
+    
+    if not result["success"]:
+        message = result["message"]
+        
+        if "Invalid" in message and "format" in message:
+            raise HTTPException(status_code=400, detail=message)
+        elif "not found" in message:
+            raise HTTPException(status_code=404, detail=message)
+        else:
+            raise HTTPException(status_code=400, detail=message)
+    
+    return result["course"]
