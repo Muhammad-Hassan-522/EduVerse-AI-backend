@@ -5,19 +5,60 @@ from dotenv import load_dotenv
 from app.schemas.teachers import TeacherUpdate
 from app.crud import admins as crud_admin
 from app.crud.students import delete_student as crud_delete_student
-from app.crud.teachers import delete_teacher as crud_delete_teacher, update_teacher as crud_update_teacher
+
+from app.crud.teachers import (
+    delete_teacher as crud_delete_teacher,
+    update_teacher as crud_update_teacher,
+)
+from app.auth.dependencies import get_current_user, require_role
+from app.schemas.admins import AdminResponse, AdminUpdateProfile, AdminUpdatePassword
+from app.crud.admins import (
+    get_admin_me,
+    update_admin_me,
+    change_admin_me_password,
+)
 from app.auth.dependencies import require_role
 
 load_dotenv()
 
-router = APIRouter(prefix="/admin", tags=["Admin"], dependencies=[Depends(require_role("admin"))])
+router = APIRouter(
+    prefix="/admin",
+    tags=["Admin – Self"],
+    dependencies=[Depends(require_role("admin"))],
+)
+
+
+@router.get("/me", response_model=AdminResponse)
+async def me(current_user=Depends(get_current_user)):
+    return await get_admin_me(current_user)
+
+
+@router.patch("/me", response_model=AdminResponse)
+async def update_me(
+    payload: AdminUpdateProfile,
+    current_user=Depends(get_current_user),
+):
+    return await update_admin_me(current_user, payload)
+
+
+@router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    payload: AdminUpdatePassword,
+    current_user=Depends(get_current_user),
+):
+    await change_admin_me_password(
+        current_user, payload.oldPassword, payload.newPassword
+    )
+
 
 # ------------------ Dashboard ------------------
+
 
 @router.get("/teachers")
 async def list_teachers():
     teachers = await crud_admin.get_all_teachers()
     return {"total": len(teachers), "teachers": teachers}
+
 
 @router.get("/students")
 async def list_students():
@@ -26,12 +67,15 @@ async def list_students():
     students = await crud_admin.get_all_students()
     return {"total": len(students), "students": students}
 
+
 @router.get("/courses")
 async def list_courses():
     courses = await crud_admin.get_all_courses()
     return {"total": len(courses), "courses": courses}
 
+
 # ------------------ Students Endpoints ------------------
+
 
 @router.patch("/students/{student_id}")
 async def update_student(student_id: str, data: dict):
@@ -42,9 +86,13 @@ async def update_student(student_id: str, data: dict):
     update_data = {k: v for k, v in data.items() if v is not None}
     if update_data:
         update_data["updatedAt"] = datetime.utcnow()
-        await crud_admin.db.students.update_one({"_id": ObjectId(student_id)}, {"$set": update_data})
+        await crud_admin.db.students.update_one(
+            {"_id": ObjectId(student_id)}, {"$set": update_data}
+        )
 
-    updated_student = await crud_admin.db.students.find_one({"_id": ObjectId(student_id)})
+    updated_student = await crud_admin.db.students.find_one(
+        {"_id": ObjectId(student_id)}
+    )
 
     return {
         "id": str(updated_student["_id"]),
@@ -52,8 +100,9 @@ async def update_student(student_id: str, data: dict):
         "email": updated_student.get("email", ""),
         "class": updated_student.get("className", "N/A"),
         "rollNo": updated_student.get("rollNo", "N/A"),
-        "status": updated_student.get("status", "Enrolled")
+        "status": updated_student.get("status", "Enrolled"),
     }
+
 
 @router.delete("/students/{student_id}")
 async def delete_student(student_id: str, tenant_id: str):
@@ -63,7 +112,9 @@ async def delete_student(student_id: str, tenant_id: str):
         raise HTTPException(status_code=404, detail="Student not found")
     return {"message": "Student deleted successfully"}
 
+
 # ------------------ Teachers Endpoints ------------------
+
 
 @router.put("/update-teacher/{id}")
 async def admin_update_teacher(id: str, updates: TeacherUpdate):
@@ -71,6 +122,7 @@ async def admin_update_teacher(id: str, updates: TeacherUpdate):
     if not updated:
         raise HTTPException(404, "Teacher not found")
     return updated
+
 
 @router.delete("/teachers/{teacher_id}")
 async def delete_teacher(teacher_id: str):
@@ -80,7 +132,9 @@ async def delete_teacher(teacher_id: str):
         raise HTTPException(status_code=404, detail="Teacher not found")
     return {"id": teacher_id, "message": "Teacher deleted successfully"}
 
+
 # ------------------ Courses Endpoints ------------------
+
 
 @router.patch("/courses/{course_id}")
 async def update_course(course_id: str, data: dict):
@@ -91,7 +145,9 @@ async def update_course(course_id: str, data: dict):
     update_data = {k: v for k, v in data.items() if v is not None}
     if update_data:
         update_data["updatedAt"] = datetime.utcnow()
-        await crud_admin.db.courses.update_one({"_id": ObjectId(course_id)}, {"$set": update_data})
+        await crud_admin.db.courses.update_one(
+            {"_id": ObjectId(course_id)}, {"$set": update_data}
+        )
 
     updated_course = await crud_admin.db.courses.find_one({"_id": ObjectId(course_id)})
 
@@ -100,8 +156,9 @@ async def update_course(course_id: str, data: dict):
         "title": updated_course.get("title", ""),
         "code": updated_course.get("courseCode", ""),
         "instructor": updated_course.get("instructor", "N/A"),
-        "status": updated_course.get("status", "Active")
+        "status": updated_course.get("status", "Active"),
     }
+
 
 @router.delete("/courses/{course_id}")
 async def delete_course(course_id: str):

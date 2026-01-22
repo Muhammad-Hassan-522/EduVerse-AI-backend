@@ -211,70 +211,6 @@ async def list_students(tenantId: str = None):
 
 
 # ---------------------------------------------------------------------------
-# Update Student
-# ---------------------------------------------------------------------------
-async def update_student(student_id: str, tenantId: str, update: StudentUpdate):
-    # 1. Find student
-    if not ObjectId.is_valid(student_id) or not ObjectId.is_valid(tenantId):
-        return None
-
-    student = await COLLECTION.find_one(
-        {"_id": ObjectId(student_id), "tenantId": ObjectId(tenantId)}
-    )
-
-    if not student:
-        return None
-
-    user_id = student.get("userId")
-    if not user_id:
-        return None
-
-    # Exclude unset fields (don't overwrite with nulls)
-    update_dict = update.dict(exclude_unset=True)
-
-    # 2. Clean data: Filter out empty strings for optional fields to avoid overwriting with empty
-    # except for profileImageURL which might be cleared intentionally
-    update_data = {}
-    for k, v in update_dict.items():
-        if v is None:
-            continue
-        if isinstance(v, str) and v.strip() == "" and k != "profileImageURL":
-            continue
-        update_data[k] = v
-
-    if not update_data:
-        return await get_student_by_id(student_id, tenantId)
-
-    # Normalize data
-    if "email" in update_data:
-        update_data["email"] = update_data["email"].lower()
-
-    update_data["updatedAt"] = datetime.utcnow()
-
-    # ✅ Update USERS collection
-    await db.users.update_one({"_id": user_id}, {"$set": update_data})
-
-    # ✅ Update STUDENT collection timestamp
-    await COLLECTION.update_one(
-        {"_id": ObjectId(student_id)}, {"$set": {"updatedAt": datetime.utcnow()}}
-    )
-
-    # ✅ ALSO update STUDENT PERFORMANCE if name changes
-    if "fullName" in update_data:
-        await student_performance_collection.update_one(
-            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenantId)},
-            {
-                "$set": {
-                    "studentName": update_data["fullName"],
-                    "updatedAt": datetime.utcnow(),
-                }
-            },
-        )
-
-    return await get_student_by_id(student_id, tenantId)
-
-
-# ---------------------------------------------------------------------------
 # Delete Student
 # ---------------------------------------------------------------------------
 async def delete_student(student_id: str, tenant_id: str):
@@ -333,3 +269,117 @@ async def get_student_by_user(user_id: str):
 
     user = await users_collection.find_one({"_id": user_id})
     return merge_user_data(student, user)
+
+
+from app.utils.exceptions import not_found, bad_request
+from app.utils.security import hash_password, verify_password
+
+# ---------------------------------------PROFILE FUnctions------------------------------------
+
+
+async def get_student_me(current_user: dict):
+    student = await COLLECTION.find_one({"userId": ObjectId(current_user["user_id"])})
+    if not student:
+        not_found("Student profile")
+
+    user = await users_collection.find_one({"_id": student["userId"]})
+    return merge_user_data(student, user)
+
+
+async def update_student_me(current_user: dict, data: StudentUpdate):
+    student = await COLLECTION.find_one({"userId": ObjectId(current_user["user_id"])})
+    if not student:
+        not_found("Student profile")
+
+    return await update_student(
+        student_id=str(student["_id"]), tenantId=str(student["tenantId"]), update=data
+    )
+
+
+async def update_student(student_id: str, tenantId: str, update: StudentUpdate):
+    # 1. Find student
+    if not ObjectId.is_valid(student_id) or not ObjectId.is_valid(tenantId):
+        return None
+
+    student = await COLLECTION.find_one(
+        {"_id": ObjectId(student_id), "tenantId": ObjectId(tenantId)}
+    )
+
+    if not student:
+        return None
+
+    user_id = student.get("userId")
+    if not user_id:
+        return None
+
+    # Exclude unset fields (don't overwrite with nulls)
+    update_dict = update.dict(exclude_unset=True)
+
+    # 2. Clean data: Filter out empty strings for optional fields to avoid overwriting with empty
+    # except for profileImageURL which might be cleared intentionally
+    update_data = {}
+    for k, v in update_dict.items():
+        if v is None:
+            continue
+        if isinstance(v, str) and v.strip() == "" and k != "profileImageURL":
+            continue
+        update_data[k] = v
+
+    if not update_data:
+        return await get_student_by_id(student_id, tenantId)
+
+    # Normalize data
+    if "email" in update_data:
+        update_data["email"] = update_data["email"].lower()
+
+    update_data["updatedAt"] = datetime.utcnow()
+
+    #  Update USERS collection
+    await db.users.update_one({"_id": user_id}, {"$set": update_data})
+
+    #  Update STUDENT collection timestamp
+    await COLLECTION.update_one(
+        {"_id": ObjectId(student_id)}, {"$set": {"updatedAt": datetime.utcnow()}}
+    )
+
+    #  ALSO update STUDENT PERFORMANCE if name changes
+    if "fullName" in update_data:
+        await student_performance_collection.update_one(
+            {"studentId": ObjectId(student_id), "tenantId": ObjectId(tenantId)},
+            {
+                "$set": {
+                    "studentName": update_data["fullName"],
+                    "updatedAt": datetime.utcnow(),
+                }
+            },
+        )
+
+    return await get_student_by_id(student_id, tenantId)
+
+
+async def change_student_me_password(
+    current_user: dict, old_password: str, new_password: str
+):
+
+    # 1. Fetch student/user document
+    user = await users_collection.find_one({"_id": ObjectId(current_user["user_id"])})
+    if not user:
+        not_found("User")
+
+    # 2. Verify old password
+    if not verify_password(old_password, user.get("password", "")):
+        bad_request("Old password is incorrect")
+
+    # 3. Hash new password
+    hashed_new = hash_password(new_password)
+
+    # 4. Update password in users collection
+    update_result = await users_collection.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"password": hashed_new, "updatedAt": datetime.utcnow()}},
+    )
+
+    if update_result.modified_count == 0:
+        bad_request("Failed to update password")
+
+    return {"message": "Password updated successfully", "updatedAt": datetime.utcnow()}

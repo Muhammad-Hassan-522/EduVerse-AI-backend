@@ -4,9 +4,14 @@ from passlib.context import CryptContext
 from bson import ObjectId
 from datetime import datetime
 
+from app.utils.exceptions import not_found, forbidden, bad_request
+from app.utils.security import hash_password, verify_password
+
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ------------------ Helper Functions ------------------
+
 
 def serialize_admin(admin: dict) -> dict:
     """Return admin data in frontend-friendly format."""
@@ -20,8 +25,9 @@ def serialize_admin(admin: dict) -> dict:
         "status": admin.get("status", "active"),
         "role": admin.get("role", "admin"),
         "createdAt": admin.get("createdAt"),
-        "updatedAt": admin.get("updatedAt")
+        "updatedAt": admin.get("updatedAt"),
     }
+
 
 def merge_user_data_admin(admin_doc, user_doc):
     if not admin_doc:
@@ -38,12 +44,12 @@ def merge_user_data_admin(admin_doc, user_doc):
         merged["createdAt"] = user_doc.get("createdAt")
     return serialize_admin(merged)
 
-def hash_password(password: str) -> str:
-    password_bytes = password.encode('utf-8')
-    if len(password_bytes) > 70:
-        password = password_bytes[:70].decode('utf-8', 'ignore')
-    return pwd_context.hash(password)
 
+def hash_password(password: str) -> str:
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 70:
+        password = password_bytes[:70].decode("utf-8", "ignore")
+    return pwd_context.hash(password)
 
 
 def serialize_teacher(teacher: dict) -> dict:
@@ -52,18 +58,25 @@ def serialize_teacher(teacher: dict) -> dict:
         "fullName": teacher.get("fullName", ""),
         "email": teacher.get("email", ""),
         "profileImageURL": teacher.get("profileImageURL", ""),
-        "assignedCourses": [str(c) for c in teacher.get("assignedCourses", [])],  # FIXED HERE
+        "assignedCourses": [
+            str(c) for c in teacher.get("assignedCourses", [])
+        ],  # FIXED HERE
         "contactNo": teacher.get("contactNo", ""),
         "country": teacher.get("country", ""),
-        "status": "Active" if str(teacher.get("status", "")).lower() == "active" else "Inactive",
+        "status": (
+            "Active"
+            if str(teacher.get("status", "")).lower() == "active"
+            else "Inactive"
+        ),
         "role": teacher.get("role", "teacher"),
         "qualifications": teacher.get("qualifications", []),
         "subjects": teacher.get("subjects", []),
         "tenantId": teacher.get("tenantId", ""),
         "createdAt": teacher.get("createdAt"),
         "updatedAt": teacher.get("updatedAt"),
-        "lastLogin": teacher.get("lastLogin", None)
+        "lastLogin": teacher.get("lastLogin", None),
     }
+
 
 def serialize_student(student: dict) -> dict:
     return {
@@ -75,14 +88,16 @@ def serialize_student(student: dict) -> dict:
         "status": student.get("status", "Inactive"),
     }
 
+
 def serialize_course(course: dict, teacher_name: str = "") -> dict:
     return {
         "id": str(course["_id"]),
         "title": course.get("title", ""),
         "code": course.get("courseCode", ""),
         "instructor": teacher_name,
-        "status": course.get("status", "Inactive")
+        "status": course.get("status", "Inactive"),
     }
+
 
 def clean_update_data(data: dict) -> dict:
     """Remove None values from dict and add updatedAt"""
@@ -91,7 +106,9 @@ def clean_update_data(data: dict) -> dict:
         update_data["updatedAt"] = datetime.utcnow()
     return update_data
 
+
 # ------------------ Admin Functions ------------------
+
 
 async def get_admin_by_email(email: str):
     user = await users_collection.find_one({"email": email, "role": "admin"})
@@ -99,6 +116,7 @@ async def get_admin_by_email(email: str):
         return None
     admin = await db.admins.find_one({"userId": user["_id"]})
     return merge_user_data_admin(admin, user)
+
 
 async def create_admin(admin: AdminCreate):
     existing = await users_collection.find_one({"email": admin.email})
@@ -122,7 +140,7 @@ async def create_admin(admin: AdminCreate):
         "country": admin.country,
         "createdAt": datetime.utcnow(),
         "updatedAt": datetime.utcnow(),
-        "lastLogin": None
+        "lastLogin": None,
     }
     user_result = await users_collection.insert_one(user_doc)
     user_id = user_result.inserted_id
@@ -132,19 +150,24 @@ async def create_admin(admin: AdminCreate):
         "userId": user_id,
         "tenantId": user_doc.get("tenantId"),
         "createdAt": datetime.utcnow(),
-        "updatedAt": datetime.utcnow()
+        "updatedAt": datetime.utcnow(),
     }
     await db.admins.insert_one(admin_doc)
-    
+
     return merge_user_data_admin(admin_doc, user_doc)
+
 
 async def create_admin_profile(user_id: str, tenant_id: str = None):
     """Create only the admin profile for an existing user."""
     admin_doc = {
         "userId": ObjectId(user_id) if isinstance(user_id, str) else user_id,
-        "tenantId": ObjectId(tenant_id) if tenant_id and isinstance(tenant_id, str) else tenant_id,
+        "tenantId": (
+            ObjectId(tenant_id)
+            if tenant_id and isinstance(tenant_id, str)
+            else tenant_id
+        ),
         "createdAt": datetime.utcnow(),
-        "updatedAt": datetime.utcnow()
+        "updatedAt": datetime.utcnow(),
     }
     await db.admins.insert_one(admin_doc)
     return admin_doc
@@ -153,59 +176,64 @@ async def create_admin_profile(user_id: str, tenant_id: str = None):
 async def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
+
 async def update_admin_profile(admin_id: str, data: AdminUpdateProfile):
     admin = await db.admins.find_one({"_id": ObjectId(admin_id)})
     if not admin:
         return None
-    
+
     user_id = admin.get("userId")
     update_data = clean_update_data(data.dict())
     if not update_data:
-        return await merge_user_data_admin(admin, await users_collection.find_one({"_id": user_id}))
+        return await merge_user_data_admin(
+            admin, await users_collection.find_one({"_id": user_id})
+        )
 
     if user_id:
         await users_collection.update_one({"_id": user_id}, {"$set": update_data})
-    
-    await db.admins.update_one({"_id": ObjectId(admin_id)}, {"$set": {"updatedAt": datetime.utcnow()}})
-    
+
+    await db.admins.update_one(
+        {"_id": ObjectId(admin_id)}, {"$set": {"updatedAt": datetime.utcnow()}}
+    )
+
     admin = await db.admins.find_one({"_id": ObjectId(admin_id)})
     user = await users_collection.find_one({"_id": user_id})
     return merge_user_data_admin(admin, user)
+
 
 async def update_admin_password(admin_id: str, old_password: str, new_password: str):
     admin = await db.admins.find_one({"_id": ObjectId(admin_id)})
     if not admin:
         raise ValueError("Admin not found")
-    
+
     user_id = admin.get("userId")
     if not user_id:
         raise ValueError("User reference not found")
-        
+
     user = await users_collection.find_one({"_id": user_id})
     if not user:
         raise ValueError("User not found")
 
     if not pwd_context.verify(old_password, user["password"]):
         raise ValueError("Old password is incorrect")
-    
+
     hashed_password = hash_password(new_password)
     await users_collection.update_one(
         {"_id": user_id},
-        {"$set": {"password": hashed_password, "updatedAt": datetime.utcnow()}}
+        {"$set": {"password": hashed_password, "updatedAt": datetime.utcnow()}},
     )
-    
+
     await db.admins.update_one(
-        {"_id": ObjectId(admin_id)},
-        {"$set": {"updatedAt": datetime.utcnow()}}
+        {"_id": ObjectId(admin_id)}, {"$set": {"updatedAt": datetime.utcnow()}}
     )
-    
+
     admin = await db.admins.find_one({"_id": ObjectId(admin_id)})
     user = await users_collection.find_one({"_id": user_id})
     return merge_user_data_admin(admin, user)
 
-# ------------------ Dashboard Functions ------------------
 
 # ------------------ Dashboard Functions (Lazy Imports & Serialization) ------------------
+
 
 async def get_all_courses():
     courses_cursor = db.courses.find({})
@@ -223,26 +251,100 @@ async def get_all_courses():
     return courses
 
 
-
 async def get_all_teachers():
     from app.crud.teachers import get_all_teachers as fetch_all_teachers
+
     raw_teachers = await fetch_all_teachers()
     return raw_teachers  # Already serialized in teachers.py
 
 
-
 async def get_all_students():
     from app.crud.students import list_students as fetch_all_students
+
     raw_students = await fetch_all_students()
     students = []
     for s in raw_students:
-        students.append({
-            "id": str(s["_id"]),
-            "name": s.get("fullName", ""),
-            "email": s.get("email", ""),
-            "class": s.get("className"),
-            "rollNo": s.get("rollNo"),
-            "status": s.get("status", "Inactive"),
-        })
+        students.append(
+            {
+                "id": str(s["_id"]),
+                "name": s.get("fullName", ""),
+                "email": s.get("email", ""),
+                "class": s.get("className"),
+                "rollNo": s.get("rollNo"),
+                "status": s.get("status", "Inactive"),
+            }
+        )
     return students
 
+
+# ------------------PROFILE Functions  ------------------
+
+
+async def get_admin_me(current_user: dict):
+    admin = await db.admins.find_one({"userId": ObjectId(current_user["user_id"])})
+    if not admin:
+        not_found("Admin profile")
+
+    user = await users_collection.find_one({"_id": admin["userId"]})
+    return merge_user_data_admin(admin, user)
+
+
+async def update_admin_me(current_user: dict, data: AdminUpdateProfile):
+    admin = await db.admins.find_one({"userId": ObjectId(current_user["user_id"])})
+    if not admin:
+        not_found("Admin profile")
+
+    return await update_admin_profile(admin_id=str(admin["_id"]), data=data)
+
+
+async def change_admin_me_password(
+    current_user: dict, old_password: str, new_password: str
+):
+    """
+    Change the password for the currently authenticated admin.
+
+    Args:
+        current_user (dict): The current user info from token, must contain 'user_id'.
+        old_password (str): Current password provided by user.
+        new_password (str): New password to set.
+
+    Returns:
+        dict: Success message with updatedAt timestamp.
+    """
+
+    # 1. Fetch admin profile
+    admin = await db.admins.find_one({"userId": ObjectId(current_user["user_id"])})
+    if not admin:
+        not_found("Admin profile")
+
+    user_id = admin.get("userId")
+    if not user_id:
+        not_found("Associated user")
+
+    # 2. Fetch user document
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+        not_found("User")
+
+    # 3. Verify old password
+    if not verify_password(old_password, user.get("password", "")):
+        forbidden("Old password is incorrect")
+
+    # 4. Hash new password
+    hashed_new = hash_password(new_password)
+
+    # 5. Update password in users collection
+    update_result = await db.users.update_one(
+        {"_id": ObjectId(user_id)},
+        {"$set": {"password": hashed_new, "updatedAt": datetime.utcnow()}},
+    )
+
+    if update_result.modified_count == 0:
+        bad_request("Failed to update password")
+
+    # 6. Update timestamp in admins collection
+    await db.admins.update_one(
+        {"_id": ObjectId(admin["_id"])}, {"$set": {"updatedAt": datetime.utcnow()}}
+    )
+
+    return {"message": "Password updated successfully", "updatedAt": datetime.utcnow()}
