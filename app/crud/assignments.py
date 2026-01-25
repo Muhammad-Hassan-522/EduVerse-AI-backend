@@ -33,8 +33,10 @@ async def serialize_assignment(a: dict) -> dict:
 
     # Fetch course name
     course = await db.courses.find_one({"_id": a["courseId"]})
-
-    course_name = course.get("title") or course.get("courseName") or "Unknown Course"
+    
+    course_name = "Unknown Course"
+    if course:
+        course_name = course.get("title") or course.get("courseName") or "Unknown Course"
 
     return {
         "id": str(a["_id"]),
