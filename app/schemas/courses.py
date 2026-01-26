@@ -52,6 +52,11 @@ class CourseBase(BaseModel):
     isFree: bool = True
     price: Optional[float] = 0
     currency: Optional[str] = "USD"
+    # Extended Metadata
+    instructorBio: Optional[str] = None
+    hasCertificate: bool = False
+    hasBadges: bool = False
+    hasLifetimeAccess: bool = False
 
 # Schema for creating a new course (requires IDs for teacher and tenant)
 class CourseCreate(CourseBase):
@@ -76,6 +81,10 @@ class CourseUpdate(BaseModel):
     isFree: Optional[bool] = None
     price: Optional[float] = None
     currency: Optional[str] = None
+    instructorBio: Optional[str] = None
+    hasCertificate: Optional[bool] = None
+    hasBadges: Optional[bool] = None
+    hasLifetimeAccess: Optional[bool] = None
 
 # Schema for the full course data as returned in API responses
 class CourseResponse(CourseBase):

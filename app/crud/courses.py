@@ -12,20 +12,19 @@ class CourseCRUD:
         self.students_collection = get_students_collection()
         self.users_collection = users_collection
 
-    def clean_update_data(self, update_dict: Dict[str, Any]) -> Dict[str, Any]:
+    async def clean_update_data(self, update_dict: Dict[str, Any]) -> Dict[str, Any]:
         """
         Cleans the update dictionary by removing nulls, default 'string' placeholders, 
         and empty values that shouldn't be overridden.
-        
-        Args:
-            update_dict: The raw dictionary containing potential updates.
-            
-        Returns:
-            A sanitized dictionary ready for the database $set operation.
         """
         cleaned = {}
         
         for key, value in update_dict.items():
+            # Explicitly allow boolean False (for toggles)
+            if isinstance(value, bool):
+                cleaned[key] = value
+                continue
+
             # Skip null values to avoid unintentional field deletion
             if value is None:
                 continue
@@ -320,7 +319,7 @@ class CourseCRUD:
 
         # Convert schema to dict and remove unset fields
         update_data = course_update.dict(exclude_unset=True)
-        cleaned_data = self.clean_update_data(update_data)
+        cleaned_data = await self.clean_update_data(update_data)
         
         # If no valid updates after cleaning, just return current state
         if not cleaned_data:
@@ -687,13 +686,71 @@ class CourseCRUD:
         
         courses = await self.collection.aggregate(pipeline).to_list(length=100)
         
-        # Serialize for JSON
-        courses = [self._serialize_course(c) for c in courses]
+        # Determine the User ID to use for progress lookup (progress is keyed by Auth User ID)
+        progress_user_id = str(student.get("userId") or student_id)
+
+        # --- NEW ENRICHMENT: Fetch and merge progress ---
+        # Fetch all progress docs for this user and these courses
+        progress_cursor = db.student_progress.find({
+            "studentId": progress_user_id,
+            "courseId": {"$in": [str(c["_id"]) for c in courses]},
+            "tenantId": ObjectId(tenantId)
+        })
+        progress_docs = await progress_cursor.to_list(length=100)
+        progress_map = {p["courseId"]: p for p in progress_docs}
+
+        enriched_courses = []
+        for course in courses:
+            course_id_str = str(course["_id"])
+            progress_doc = progress_map.get(course_id_str, {})
+            
+            # Calculate total lessons across all modules
+            total_lessons = 0
+            all_lessons_list = []
+            modules = course.get("modules") or []
+            
+            for module in modules:
+                module_lessons = module.get("lessons") or []
+                total_lessons += len(module_lessons)
+                all_lessons_list.extend(module_lessons)
+            
+            # Get completed lesson IDs (ensure they are strings for comparison)
+            completed_ids = set(str(lid) for lid in progress_doc.get("completedLessons", []))
+            lessons_completed_count = len(completed_ids)
+            
+            # Determine next lesson title
+            next_lesson_title = None
+            
+            if total_lessons > 0:
+                if lessons_completed_count >= total_lessons:
+                    next_lesson_title = "Course Finished! 🎉"
+                else:
+                    # Find the first lesson that has NOT been completed
+                    for lesson in all_lessons_list:
+                        # Normalize lesson ID extraction to match how it's saved (usually 'id' from frontend)
+                        l_id = str(lesson.get("id") or lesson.get("_id") or "")
+                        if l_id and l_id not in completed_ids:
+                            next_lesson_title = lesson.get("title", "Next Lesson")
+                            break
+                    
+                    if not next_lesson_title:
+                         next_lesson_title = "Continue Learning"
+            else:
+                next_lesson_title = "Upcoming Content"
+            
+            # Add fields to course object
+            course["progress"] = progress_doc.get("progressPercentage", 0)
+            course["lessonsCompleted"] = lessons_completed_count
+            course["totalLessons"] = total_lessons
+            course["nextLesson"] = next_lesson_title or "Overview"
+            
+            # Ensure the object is serialized properly
+            enriched_courses.append(self._serialize_course(course))
         
         return {
             "success": True,
-            "message": f"Found {len(courses)} enrolled courses",
-            "courses": courses
+            "message": f"Found {len(enriched_courses)} enrolled courses with progress",
+            "courses": enriched_courses
         }
 
     async def reorder_lessons(self, course_id: str, tenant_id: str, module_id: str, lesson_ids: List[str]) -> dict:

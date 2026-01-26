@@ -9,11 +9,14 @@ from app.schemas.courses import (
     CourseEnrollment,
     ReorderLessonsRequest,
     ReorderModulesRequest,
-    PublishCourseRequest
+    PublishCourseRequest,
+    CourseWithProgress
 )
 from app.crud.courses import course_crud
 
-from app.auth.dependencies import get_current_user
+from app.schemas.student_progress import MarkLessonCompleteRequest, CourseProgressResponse
+from app.crud.student_progress import progress_crud
+from app.auth.dependencies import get_current_user, require_role, require_tenant
 
 router = APIRouter(prefix="/courses", tags=["courses"], dependencies=[Depends(get_current_user)])
 
@@ -273,7 +276,7 @@ async def unenroll_student_from_course(
     return result
 
 
-@router.get("/student/{student_id}", response_model=List[CourseResponse])
+@router.get("/student/{student_id}", response_model=List[CourseWithProgress])
 async def get_student_courses(
     student_id: str,
     tenantId: str = Query(..., description="Tenant ID (required)")  
