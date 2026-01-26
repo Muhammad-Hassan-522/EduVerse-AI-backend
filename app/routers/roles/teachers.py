@@ -7,67 +7,97 @@ from app.schemas.teachers import (
     ChangePassword,
 )
 from app.crud.teachers import (
+    change_teacher_me_password,
     create_teacher,
     get_all_teachers,
     get_teacher,
+    get_teacher_me,
     update_teacher,
     delete_teacher,
     change_password,
     get_teacher_students,
     get_teacher_dashboard,
+    update_teacher_me,
 )
 from app.auth.dependencies import get_current_user, require_role
 
 router = APIRouter(
-    prefix="/teachers", tags=["Teachers"], dependencies=[Depends(get_current_user)]
+    prefix="/teachers",
+    tags=["Teacher – Self"],
+    dependencies=[Depends(require_role("teacher"))],
 )
-
 
 # ------------------ Profile (Me) ------------------
 
 
 @router.get("/me", response_model=TeacherResponse)
-async def get_my_profile(current_user=Depends(get_current_user)):
-    # Assuming current_user is the dict from get_current_user dependency
-    # which usually contains "user_id"
-    uid = (
-        current_user.get("user_id")
-        if isinstance(current_user, dict)
-        else current_user.id
-    )
-    print(f"DEBUG: Fetching teacher profile for UserID: {uid}")
-
-    t = await get_teacher_students(
-        uid
-    )  # wait, get_teacher_students is lists. We need get_teacher_by_user
-    # We need to import get_teacher_by_user from crud
-    from app.crud.teachers import get_teacher_by_user, update_teacher_profile
-
-    teacher = await get_teacher_by_user(uid)
-    if not teacher:
-        print(f"DEBUG: Teacher profile NOT FOUND for UserID: {uid}")
-        # If user is teacher but no teacher profile exists?
-        raise HTTPException(404, "Teacher profile not found")
-
-    print(f"DEBUG: Teacher profile found: {teacher.get('id')}")
-    return teacher
+async def me(current_user=Depends(get_current_user)):
+    return await get_teacher_me(current_user)
 
 
 @router.patch("/me", response_model=TeacherResponse)
-async def update_my_profile(
-    updates: TeacherUpdate, current_user=Depends(get_current_user)
+async def update_me(
+    payload: TeacherUpdate,
+    current_user=Depends(get_current_user),
 ):
-    uid = (
-        current_user.get("user_id")
-        if isinstance(current_user, dict)
-        else current_user.id
-    )
-    from app.crud.teachers import update_teacher_profile
+    return await update_teacher_me(current_user, payload)
 
-    updated = await update_teacher_profile(uid, updates.dict(exclude_unset=True))
-    if not updated:
-        raise HTTPException(404, "Teacher profile not found")
-    return updated
+
+@router.put("/me/password")
+async def change_password(
+    payload: ChangePassword,
+    current_user=Depends(get_current_user),
+):
+    await change_teacher_me_password(
+        current_user, payload.oldPassword, payload.newPassword
+    )
+
+
+# ------------------ Profile (Me) ------------------
+
+
+# @router.get("/me", response_model=TeacherResponse)
+# async def get_my_profile(current_user=Depends(get_current_user)):
+#     # Assuming current_user is the dict from get_current_user dependency
+#     # which usually contains "user_id"
+#     uid = (
+#         current_user.get("user_id")
+#         if isinstance(current_user, dict)
+#         else current_user.id
+#     )
+#     print(f"DEBUG: Fetching teacher profile for UserID: {uid}")
+
+#     t = await get_teacher_students(
+#         uid
+#     )  # wait, get_teacher_students is lists. We need get_teacher_by_user
+#     # We need to import get_teacher_by_user from crud
+#     from app.crud.teachers import get_teacher_by_user, update_teacher_profile
+
+#     teacher = await get_teacher_by_user(uid)
+#     if not teacher:
+#         print(f"DEBUG: Teacher profile NOT FOUND for UserID: {uid}")
+#         # If user is teacher but no teacher profile exists?
+#         raise HTTPException(404, "Teacher profile not found")
+
+#     print(f"DEBUG: Teacher profile found: {teacher.get('id')}")
+#     return teacher
+
+
+# @router.patch("/me", response_model=TeacherResponse)
+# async def update_my_profile(
+#     updates: TeacherUpdate, current_user=Depends(get_current_user)
+# ):
+#     uid = (
+#         current_user.get("user_id")
+#         if isinstance(current_user, dict)
+#         else current_user.id
+#     )
+#     from app.crud.teachers import update_teacher_profile
+
+#     updated = await update_teacher_profile(uid, updates.dict(exclude_unset=True))
+#     if not updated:
+#         raise HTTPException(404, "Teacher profile not found")
+#     return updated
 
 
 def validate_object_id(id: str, name="id"):
@@ -88,33 +118,33 @@ async def get_all_teachers_route():
     return await get_all_teachers()
 
 
-@router.get("/{id}", response_model=TeacherResponse)
-async def get_teacher_route(id: str):
-    validate_object_id(id)
-    t = await get_teacher(id)
-    if not t:
-        raise HTTPException(404, "Teacher not found")
-    return t
+# @router.get("/{id}", response_model=TeacherResponse)
+# async def get_teacher_route(id: str):
+#     validate_object_id(id)
+#     t = await get_teacher(id)
+#     if not t:
+#         raise HTTPException(404, "Teacher not found")
+#     return t
 
 
-@router.put("/{id}", response_model=TeacherResponse)
-async def update_teacher_route(id: str, updates: TeacherUpdate):
-    validate_object_id(id)
-    updated = await update_teacher(id, updates.dict(exclude_unset=True))
-    if not updated:
-        raise HTTPException(404, "Teacher not found")
-    return updated
+# @router.put("/{id}", response_model=TeacherResponse)
+# async def update_teacher_route(id: str, updates: TeacherUpdate):
+#     validate_object_id(id)
+#     updated = await update_teacher(id, updates.dict(exclude_unset=True))
+#     if not updated:
+#         raise HTTPException(404, "Teacher not found")
+#     return updated
 
 
-@router.put("/{id}/password")
-async def change_teacher_password_route(id: str, data: ChangePassword):
-    validate_object_id(id)
-    result = await change_password(id, data.oldPassword, data.newPassword)
-    if result == "INCORRECT":
-        raise HTTPException(403, "Old password incorrect")
-    if not result:
-        raise HTTPException(404, "Teacher not found")
-    return {"message": "Password updated successfully"}
+# @router.put("/{id}/password")
+# async def change_teacher_password_route(id: str, data: ChangePassword):
+#     validate_object_id(id)
+#     result = await change_password(id, data.oldPassword, data.newPassword)
+#     if result == "INCORRECT":
+#         raise HTTPException(403, "Old password incorrect")
+#     if not result:
+#         raise HTTPException(404, "Teacher not found")
+#     return {"message": "Password updated successfully"}
 
 
 @router.delete("/{id}")

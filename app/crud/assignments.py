@@ -31,15 +31,18 @@ async def serialize_assignment(a: dict) -> dict:
         except Exception:
             return value
 
-    # Fetch course name
-    course = await db.courses.find_one({"_id": a["courseId"]})
+    course = None
+    if a.get("courseId"):
+        course = await db.courses.find_one({"_id": a["courseId"]})
 
-    course_name = course.get("title") or course.get("courseName") or "Unknown Course"
+    course_name = (
+        course.get("title") or course.get("courseName") if course else "Unknown Course"
+    )
 
     return {
         "id": str(a["_id"]),
         "courseId": str(a["courseId"]),
-        "courseName": course_name,  # for display purposes
+        "courseName": course_name,
         "teacherId": str(a["teacherId"]),
         "tenantId": str(a["tenantId"]),
         "title": a["title"],

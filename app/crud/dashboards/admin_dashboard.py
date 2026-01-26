@@ -1,5 +1,19 @@
 from bson import ObjectId
 from app.db.database import db
+from bson import ObjectId
+
+
+def convert_objectids(doc):
+    """
+    Recursively convert ObjectId fields in a dict or list to strings.
+    """
+    if isinstance(doc, list):
+        return [convert_objectids(d) for d in doc]
+    if isinstance(doc, dict):
+        return {k: convert_objectids(v) for k, v in doc.items()}
+    if isinstance(doc, ObjectId):
+        return str(doc)
+    return doc
 
 
 async def get_all_students(tenant_id: str):
@@ -10,23 +24,25 @@ async def get_all_students(tenant_id: str):
 
     tenant_oid = ObjectId(tenant_id)
     async for s in db.students.find({"tenantId": tenant_oid}):
-        user = await db.users.find_one({"_id": s["userId"]})
+        user = await db.users.find_one({"_id": ObjectId(s["userId"])})
 
         if not user:
             continue
 
-        # Merge user data directly into student object
-        students.append(
-            {
-                "id": str(s["_id"]),
-                "fullName": user.get("fullName", ""),
-                "email": user.get("email", ""),
-                "status": user.get("status", "active"),
-                "country": user.get("country"),
-                "enrolledCourses": s.get("enrolledCourses", []),
-                "completedCourses": s.get("completedCourses", []),
-            }
-        )
+        student_data = {
+            "id": s["_id"],
+            "fullName": user.get("fullName", ""),
+            "email": user.get("email", ""),
+            "status": user.get("status", "active"),
+            "country": user.get("country"),
+            "enrolledCourses": s.get("enrolledCourses", []),
+            "completedCourses": s.get("completedCourses", []),
+            "tenantId": s.get("tenantId"),
+            "userId": s.get("userId"),
+        }
+
+        # Convert all ObjectId fields to strings
+        students.append(convert_objectids(student_data))
 
     return students
 

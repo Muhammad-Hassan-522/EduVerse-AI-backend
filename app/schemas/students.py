@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 from datetime import datetime
 
+
 class StudentCreate(BaseModel):
     fullName: str
     email: EmailStr
@@ -11,9 +12,11 @@ class StudentCreate(BaseModel):
     country: Optional[str] = None
     status: str = "active"
 
+
 class StudentLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class StudentUpdate(BaseModel):
     fullName: Optional[str] = None
@@ -22,6 +25,7 @@ class StudentUpdate(BaseModel):
     contactNo: Optional[str] = None
     country: Optional[str] = None
     status: Optional[str] = None
+
 
 class StudentResponse(BaseModel):
     id: str

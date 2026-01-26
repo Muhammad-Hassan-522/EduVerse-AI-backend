@@ -4,6 +4,7 @@ from datetime import datetime
 
 # ------------------ Request Models ------------------
 
+
 class AdminCreate(BaseModel):
     firstName: str
     lastName: str
@@ -13,9 +14,11 @@ class AdminCreate(BaseModel):
     country: str
     phone: str
 
+
 class AdminLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class AdminUpdateProfile(BaseModel):
     fullName: Optional[str] = None
@@ -23,11 +26,15 @@ class AdminUpdateProfile(BaseModel):
     contactNo: Optional[str] = None
     profileImageURL: Optional[str] = None
 
+
 class AdminUpdatePassword(BaseModel):
     oldPassword: str
     newPassword: str = Field(..., min_length=6)
 
+
 # ------------------ Response Models ------------------
+
+
 
 class AdminResponse(BaseModel):
     id: str
