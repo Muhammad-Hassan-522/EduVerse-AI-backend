@@ -1,18 +1,17 @@
 from pydantic import BaseModel, EmailStr, Field
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Optional
 from pydantic import ConfigDict
 
 
 class UserBase(BaseModel):
     fullName: str
     email: EmailStr
-    role: Literal["student", "teacher", "admin", "super_admin", "super-admin"]
+    role: str  # student | teacher | admin | super_admin
     status: str = "active"
     profileImageURL: Optional[str] = None
     contactNo: Optional[str] = None
     country: Optional[str] = None
-    tenantId: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

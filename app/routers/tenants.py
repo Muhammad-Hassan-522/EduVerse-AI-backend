@@ -3,14 +3,7 @@ from app.auth.dependencies import require_role
 from bson import ObjectId
 from typing import Optional
 from app.schemas.tenants import TenantResponse, TenantCreate, TenantUpdate
-from app.crud.tenants import (
-    create_tenant,
-    get_all_tenants,
-    delete_tenant,
-    get_tenant,
-    update_tenant,
-    get_tenant_dashboard_overview,
-)
+from app.crud.tenants import create_tenant, get_all_tenants, delete_tenant, get_tenant, update_tenant
 
 router = APIRouter(
     prefix="/tenants",
@@ -46,27 +39,9 @@ async def get_all(
     limit: int = Query(10, ge=1, le=100, description="Max tenants to return"),
     status: Optional[str] = Query(None, description="Filter tenants by status"),
     search: Optional[str] = Query(None, description="Search tenants by tenant name or admin email"),
-    sort: Optional[str] = Query(None, description="Sort results: 'name' or 'createdAt or '-createdAt'"),
-    planCode: Optional[str] = Query(None, description="Filter by assigned subscription plan code"),
-    category: Optional[str] = Query(None, description="Filter by subscription category"),
+    sort: Optional[str] = Query(None, description="Sort results: 'name' or 'createdAt or '-createdAt'")
 ):
-    return await get_all_tenants(
-        skip=skip,
-        limit=limit,
-        status=status,
-        search=search,
-        sort=sort,
-        plan_code=planCode,
-        plan_category=category,
-    )
-
-
-@router.get("/dashboard/overview", summary="Get super-admin dashboard overview")
-async def get_dashboard_overview(
-    months: int = Query(6, ge=1, le=24),
-    topN: int = Query(5, ge=1, le=20),
-):
-    return await get_tenant_dashboard_overview(months=months, top_n=topN)
+    return await get_all_tenants(skip=skip, limit=limit, status=status, search=search, sort=sort)
 
 
 # -------------------------

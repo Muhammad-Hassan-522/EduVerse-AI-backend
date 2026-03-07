@@ -10,7 +10,7 @@ def admin_guard(user):
 
 def require_tenant():
     def checker(current_user=Depends(get_current_user)):
-        if not current_user.get("tenant_id"):
+        if not current_user.get("tenantId"):
             raise HTTPException(403, "Tenant context required")
         return current_user
 

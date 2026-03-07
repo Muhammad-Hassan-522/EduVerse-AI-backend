@@ -36,7 +36,7 @@ class StudentResponse(BaseModel):
     country: Optional[str] = None
     status: Optional[str]
     role: str
-    tenantId: Optional[str] = None
+    tenantId: str
     enrolledCourses: List[str]
     completedCourses: List[str]
     createdAt: datetime
